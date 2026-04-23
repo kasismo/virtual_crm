@@ -1,1 +1,6 @@
-# virtual_crm
+streamlit
+pandas
+sqlalchemy
+pymysql
+cryptography
+google-generativeai
