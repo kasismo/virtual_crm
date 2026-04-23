@@ -12,9 +12,6 @@ import plotly.express as px
 
 # --- 1. CONFIGURACIÓN DE PÁGINA Y ESTADOS ---
 st.set_page_config(page_title="SaaS Analytics Pro", page_icon="🏢", layout="wide")
-import bcrypt
-hash_real = bcrypt.hashpw(b"admin123", bcrypt.gensalt()).decode('utf-8')
-st.warning(f"Copia tu Hash Real: {hash_real}")
 
 # Inicializamos la "memoria" de la aplicación
 if 'autenticado' not in st.session_state:
@@ -24,13 +21,12 @@ if 'empresa_id' not in st.session_state:
 if 'nombre_empresa' not in st.session_state:
     st.session_state['nombre_empresa'] = None
 
-# --- 2. MÓDULO DE SEGURIDAD (LA BÓVEDA - MODO DEBUG) ---
+# --- 2. MÓDULO DE SEGURIDAD (LA BÓVEDA LIMPIA) ---
 def verificar_login(email, password_plana):
-    """Versión de diagnóstico para encontrar el error exacto."""
+    """Se conecta a PostgreSQL para validar usuarios de tu SaaS."""
     try:
         motor_auth = create_engine(st.secrets["DB_AUTH_URI"])
         
-        # Le pusimos TRIM al email en la base de datos para forzar la limpieza
         query = text("""
             SELECT u.password_hash, u.empresa_id, e.nombre_empresa 
             FROM usuarios u
@@ -42,27 +38,15 @@ def verificar_login(email, password_plana):
             resultado = conexion.execute(query, {"email": email.strip()}).fetchone()
             
         if resultado:
-            st.info("🔍 DIAGNÓSTICO: Usuario encontrado en la base de datos.")
-            
             hash_bd = resultado[0].strip().encode('utf-8') 
             pass_bytes = password_plana.strip().encode('utf-8')
             
-            # Mostramos el hash para ver si está cortado o corrupto
-            st.code(f"Hash en BD: {hash_bd}")
-            
             if bcrypt.checkpw(pass_bytes, hash_bd):
-                st.success("✅ DIAGNÓSTICO: Criptografía superada.")
                 return True, resultado[1], resultado[2] 
-            else:
-                st.error("❌ DIAGNÓSTICO: La criptografía Bcrypt rechazó la contraseña.")
-                return False, None, None
                 
-        else:
-            st.warning("⚠️ DIAGNÓSTICO: El correo no se encontró en Supabase.")
-            return False, None, None
-            
+        return False, None, None
     except Exception as e:
-        st.error(f"❌ DIAGNÓSTICO DE ERROR CRÍTICO: {e}")
+        st.error(f"Error de conexión con el servidor de autenticación: {e}")
         return False, None, None
 
 # --- 3. MÓDULOS DE INGESTIÓN Y LIMPIEZA ---
