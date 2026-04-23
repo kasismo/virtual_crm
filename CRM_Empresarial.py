@@ -21,34 +21,45 @@ if 'empresa_id' not in st.session_state:
 if 'nombre_empresa' not in st.session_state:
     st.session_state['nombre_empresa'] = None
 
-# --- 2. MÓDULO DE SEGURIDAD (LA BÓVEDA) ---
+# --- 2. MÓDULO DE SEGURIDAD (LA BÓVEDA - MODO DEBUG) ---
 def verificar_login(email, password_plana):
-    """Se conecta a PostgreSQL para validar usuarios de tu SaaS."""
+    """Versión de diagnóstico para encontrar el error exacto."""
     try:
         motor_auth = create_engine(st.secrets["DB_AUTH_URI"])
         
+        # Le pusimos TRIM al email en la base de datos para forzar la limpieza
         query = text("""
             SELECT u.password_hash, u.empresa_id, e.nombre_empresa 
             FROM usuarios u
             JOIN empresas e ON u.empresa_id = e.id
-            WHERE u.email = :email
+            WHERE TRIM(u.email) = :email
         """)
         
         with motor_auth.connect() as conexion:
-            # Usamos .strip() aquí por si el usuario metió un espacio al teclear el email
             resultado = conexion.execute(query, {"email": email.strip()}).fetchone()
             
         if resultado:
-            # Usamos .strip() aquí para limpiar cualquier espacio invisible guardado en la BD
+            st.info("🔍 DIAGNÓSTICO: Usuario encontrado en la base de datos.")
+            
             hash_bd = resultado[0].strip().encode('utf-8') 
             pass_bytes = password_plana.strip().encode('utf-8')
             
+            # Mostramos el hash para ver si está cortado o corrupto
+            st.code(f"Hash en BD: {hash_bd}")
+            
             if bcrypt.checkpw(pass_bytes, hash_bd):
+                st.success("✅ DIAGNÓSTICO: Criptografía superada.")
                 return True, resultado[1], resultado[2] 
+            else:
+                st.error("❌ DIAGNÓSTICO: La criptografía Bcrypt rechazó la contraseña.")
+                return False, None, None
                 
-        return False, None, None
+        else:
+            st.warning("⚠️ DIAGNÓSTICO: El correo no se encontró en Supabase.")
+            return False, None, None
+            
     except Exception as e:
-        st.error(f"Error de conexión con el servidor de autenticación: {e}")
+        st.error(f"❌ DIAGNÓSTICO DE ERROR CRÍTICO: {e}")
         return False, None, None
 
 # --- 3. MÓDULOS DE INGESTIÓN Y LIMPIEZA ---
