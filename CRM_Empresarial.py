@@ -25,22 +25,25 @@ if 'nombre_empresa' not in st.session_state:
 def verificar_login(email, password_plana):
     """Se conecta a PostgreSQL para validar usuarios de tu SaaS."""
     try:
-        # Aquí conectas tu nueva base de datos de clientes (ej. Supabase o Neon)
         motor_auth = create_engine(st.secrets["DB_AUTH_URI"])
         
-        # Usamos parámetros (:email) para evitar SQL Injection
-        query = text("SELECT password_hash, company_id, company_name FROM usuarios WHERE email = :email")
+        # LA CONSULTA CORREGIDA CON "JOIN" Y NOMBRES EN ESPAÑOL
+        query = text("""
+            SELECT u.password_hash, u.empresa_id, e.nombre_empresa 
+            FROM usuarios u
+            JOIN empresas e ON u.empresa_id = e.id
+            WHERE u.email = :email
+        """)
         
         with motor_auth.connect() as conexion:
             resultado = conexion.execute(query, {"email": email}).fetchone()
             
         if resultado:
-            hash_bd = resultado[0].encode('utf-8') # Bcrypt necesita bytes
+            hash_bd = resultado[0].encode('utf-8') 
             pass_bytes = password_plana.encode('utf-8')
             
-            # Magia criptográfica
             if bcrypt.checkpw(pass_bytes, hash_bd):
-                return True, resultado[1], resultado[2] # Retorna ID y Nombre
+                return True, resultado[1], resultado[2] 
                 
         return False, None, None
     except Exception as e:
