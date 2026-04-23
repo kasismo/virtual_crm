@@ -12,6 +12,9 @@ import plotly.express as px
 
 # --- 1. CONFIGURACIÓN DE PÁGINA Y ESTADOS ---
 st.set_page_config(page_title="SaaS Analytics Pro", page_icon="🏢", layout="wide")
+import bcrypt
+hash_real = bcrypt.hashpw(b"admin123", bcrypt.gensalt()).decode('utf-8')
+st.warning(f"Copia tu Hash Real: {hash_real}")
 
 # Inicializamos la "memoria" de la aplicación
 if 'autenticado' not in st.session_state:
