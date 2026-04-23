@@ -27,7 +27,6 @@ def verificar_login(email, password_plana):
     try:
         motor_auth = create_engine(st.secrets["DB_AUTH_URI"])
         
-        # LA CONSULTA CORREGIDA CON "JOIN" Y NOMBRES EN ESPAÑOL
         query = text("""
             SELECT u.password_hash, u.empresa_id, e.nombre_empresa 
             FROM usuarios u
@@ -36,11 +35,13 @@ def verificar_login(email, password_plana):
         """)
         
         with motor_auth.connect() as conexion:
-            resultado = conexion.execute(query, {"email": email}).fetchone()
+            # Usamos .strip() aquí por si el usuario metió un espacio al teclear el email
+            resultado = conexion.execute(query, {"email": email.strip()}).fetchone()
             
         if resultado:
-            hash_bd = resultado[0].encode('utf-8') 
-            pass_bytes = password_plana.encode('utf-8')
+            # Usamos .strip() aquí para limpiar cualquier espacio invisible guardado en la BD
+            hash_bd = resultado[0].strip().encode('utf-8') 
+            pass_bytes = password_plana.strip().encode('utf-8')
             
             if bcrypt.checkpw(pass_bytes, hash_bd):
                 return True, resultado[1], resultado[2] 
