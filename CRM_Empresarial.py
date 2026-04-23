@@ -158,8 +158,7 @@ else:
 
     st.title("💸 Panel de Inteligencia de Negocios")
     st.markdown("Selecciona el origen de tus datos para comenzar el análisis.")
-hash_real = bcrypt.hashpw(b"admin123", bcrypt.gensalt()).decode('utf-8')
-st.warning(f"Copia tu Hash Real: {hash_real}")
+    
     # 1. ENRUTADOR DE INGESTIÓN
     fuente_datos = st.radio("Origen de datos:", ["Subir Archivo Local", "Sincronizar Google Drive"], horizontal=True)
     
