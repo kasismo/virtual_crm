@@ -1,7 +1,10 @@
 streamlit
 pandas
-sqlalchemy
-pymysql
-cryptography
-google-generativeai
+openpyxl
+SQLAlchemy
+psycopg2-binary
 bcrypt
+google-generativeai
+gspread
+google-auth
+plotly
