@@ -157,6 +157,8 @@ else:
         st.rerun()
 
     st.title("💸 Panel de Inteligencia de Negocios")
+    hash_real = bcrypt.hashpw(b"admin123", bcrypt.gensalt()).decode('utf-8')
+st.warning(f"Copia tu Hash Real: {hash_real}")
     st.markdown("Selecciona el origen de tus datos para comenzar el análisis.")
     
     # 1. ENRUTADOR DE INGESTIÓN
