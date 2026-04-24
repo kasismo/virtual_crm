@@ -81,22 +81,33 @@ def extraer_limpiar_drive(nombre_archivo):
 
 # --- 4. EL CEREBRO IA ---
 @st.cache_data
-def mapear_columnas(columnas):
+def mapear_columnas(lista_de_columnas):
     """Usa Gemini para entender cualquier Excel."""
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    modelo = genai.GenerativeModel('gemini-2.5-flash')
-    
-    prompt = f"""
-    Mapea esta lista de columnas: {columnas}.
-    Busca: "fecha", "valor", "gastos", "ganancia", "categoria", "filtro".
-    Responde SÓLO en JSON plano, sin markdown.
-    """
     try:
+        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+        modelo = genai.GenerativeModel('gemini-2.5-flash')
+        
+        prompt = f"""
+        Eres un analista de datos. Analiza esta lista de columnas: {lista_de_columnas}
+        Mapea qué columna original sirve para cada métrica.
+        - "fecha": (día, mes, date, fecha, timestamp, order date).
+        - "valor": (sales, ventas, ingresos, facturacion, total).
+        - "gastos": (costos, gastos, discount, egresos).
+        - "ganancia": (profit, ganancia, margen, neto).
+        - "categoria": (category, state, ciudad, segmento, producto).
+        - "filtro": (region, pais, continente).
+        
+        Responde ÚNICAMENTE con la estructura JSON. No agregues comillas markdown (```json).
+        Ejemplo exacto de tu respuesta:
+        {{"fecha": "Order Date", "valor": "Sales", "gastos": null, "ganancia": "Profit", "categoria": "State", "filtro": "Region"}}
+        """
+        
         respuesta = modelo.generate_content(prompt)
         txt = respuesta.text.replace('```json', '').replace('```', '').strip()
         return json.loads(txt)
-    except:
-        return {} # En producción aquí iría tu fallback manual
+    except Exception as e:
+        st.error(f"Error en la IA: {e}")
+        return {}
 
 # ==========================================
 #        INTERFAZ DE USUARIO (FRONTEND)
