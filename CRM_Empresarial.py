@@ -9,6 +9,8 @@ import google.generativeai as genai
 import plotly.express as px
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+import chardet
+import csv
 
 # --- 1. CONFIGURACIÓN DE PÁGINA Y ESTADOS ---
 st.set_page_config(page_title="SaaS Analytics Pro", page_icon="🏢", layout="wide")
@@ -51,33 +53,43 @@ def verificar_login(email, password_plana):
 
 # --- 3. MÓDULOS DE INGESTIÓN Y LIMPIEZA ---
 def reparar_archivo_local(uploaded_file):
-    """El Reparador: Cura archivos corruptos subidos a mano."""
-    bytes_data = uploaded_file.getvalue()
-    if uploaded_file.name.endswith(('.xlsx', '.xls')):
-        return pd.read_excel(io.BytesIO(bytes_data))
+    """El Reparador Integrado: Cura archivos corruptos usando análisis de bytes y sniffer."""
+    # Leemos la firma real del archivo
+    cabecera_bytes = uploaded_file.read(4)
+    uploaded_file.seek(0)
+    
+    # 1. Tratamiento para Excel (Moderno o Antiguo)
+    if cabecera_bytes.startswith(b'PK') or cabecera_bytes.startswith(b'\xd0\xcf') or uploaded_file.name.endswith(('.xlsx', '.xls')):
+        return pd.read_excel(uploaded_file)
         
-    for enc in ['utf-8', 'latin1', 'windows-1252']:
+    # 2. Tratamiento Forense para CSV / Texto
+    else:
+        # Extraemos una muestra para analizar el ADN
+        muestra_bytes = uploaded_file.read(50000)
+        uploaded_file.seek(0)
+        
+        # Detectamos la codificación real
+        resultado = chardet.detect(muestra_bytes)
+        cod = resultado['encoding'] or 'utf-8'
+        if cod.lower() == 'ascii': 
+            cod = 'utf-8'
+            
+        # Olfateamos el delimitador correcto
+        muestra_texto = muestra_bytes.decode(cod, errors='replace')
         try:
-            texto = bytes_data.decode(enc)
-            return pd.read_csv(io.StringIO(texto))
-        except UnicodeDecodeError:
-            continue
-    raise ValueError("Archivo intratable.")
-
-def extraer_limpiar_drive(nombre_archivo):
-    """El Limpiador: Conecta a Google Workspace y estandariza."""
-    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-    credenciales = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-    cliente = gspread.authorize(credenciales)
-    
-    hoja = cliente.open(nombre_archivo).sheet1
-    df = pd.DataFrame(hoja.get_all_records())
-    
-    # Reglas de limpieza corporativa
-    df = df.replace(["", " "], pd.NA)
-    df = df.dropna(how='all') # Borra filas totalmente vacías
-    df = df.fillna("NO_DATO")
-    return df
+            delim = csv.Sniffer().sniff(muestra_texto).delimiter
+        except:
+            delim = ',' # Salvavidas por defecto
+            
+        # Cirugía: Leemos el archivo saltando las filas destructivas (on_bad_lines='skip')
+        df = pd.read_csv(
+            uploaded_file, 
+            encoding=cod, 
+            sep=delim, 
+            on_bad_lines='skip',
+            engine='python'
+        )
+        return df
 
 # --- 4. EL CEREBRO IA ---
 @st.cache_data
