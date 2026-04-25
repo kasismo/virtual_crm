@@ -6,9 +6,9 @@ import time
 import io
 import json
 import google.generativeai as genai
-import gspread
-from google.oauth2.service_account import Credentials
 import plotly.express as px
+from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
 
 # --- 1. CONFIGURACIÓN DE PÁGINA Y ESTADOS ---
 st.set_page_config(page_title="SaaS Analytics Pro", page_icon="🏢", layout="wide")
@@ -162,22 +162,88 @@ else:
     
     df_ventas = pd.DataFrame()
     
+# 1. CONFIGURACIÓN DEL MOTOR OAUTH (Coloca esto justo antes del primer if)
+    oauth_config = {
+        "web": {
+            "client_id": st.secrets["google_oauth"]["client_id"],
+            "project_id": st.secrets["google_oauth"]["project_id"],
+            "auth_uri": st.secrets["google_oauth"]["auth_uri"],
+            "token_uri": st.secrets["google_oauth"]["token_uri"],
+            "auth_provider_x509_cert_url": st.secrets["google_oauth"]["auth_provider_x509_cert_url"],
+            "client_secret": st.secrets["google_oauth"]["client_secret"],
+            "redirect_uris": st.secrets["google_oauth"]["redirect_uris"]
+        }
+    }
+    redirect_uri = st.secrets["google_oauth"]["redirect_uris"][0]
+    SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly', 'https://www.googleapis.com/auth/drive.readonly']
+    flow = Flow.from_client_config(oauth_config, scopes=SCOPES, redirect_uri=redirect_uri)
+
+    # 2. CAPTURA DEL CÓDIGO DE GOOGLE (Gestión automática del regreso del login)
+    if "code" in st.query_params:
+        try:
+            flow.fetch_token(code=st.query_params["code"])
+            st.session_state["google_creds"] = flow.credentials
+            # Limpiamos la URL para una experiencia limpia
+            st.query_params.clear()
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error de autorización: {e}")
+
+    # --- 3. BLOQUE REEMPLAZADO ---
     if fuente_datos == "Subir Archivo Local":
         archivo = st.file_uploader("Sube tu CSV o Excel", type=['csv', 'xlsx'])
         if archivo:
             with st.spinner("Reparando archivo en memoria..."):
+                # Tu función de limpieza local original
                 df_ventas = reparar_archivo_local(archivo)
+                st.session_state["df_ventas"] = df_ventas 
                 st.success("✅ Archivo curado y cargado.")
                 
     elif fuente_datos == "Sincronizar Google Drive":
-        nombre_sheet = st.text_input("Nombre del archivo en tu Google Workspace:")
-        if st.button("Conectar y Limpiar Nube") and nombre_sheet:
-            with st.spinner("Autenticando APIs de Google y auditando datos..."):
-                try:
-                    df_ventas = extraer_limpiar_drive(nombre_sheet)
-                    st.success("✅ Nube sincronizada y datos limpios.")
-                except Exception as e:
-                    st.error(f"Error de conexión a Drive: {e}")
+        # Verificamos si ya hay una sesión de Google activa
+        if "google_creds" not in st.session_state:
+            auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
+            st.info("Para sincronizar archivos de la nube, primero vincula tu cuenta.")
+            st.link_button("🔐 Iniciar sesión con Google", auth_url)
+        else:
+            st.success("✅ Cuenta de Google vinculada.")
+            nombre_sheet = st.text_input("Nombre del archivo en tu Google Workspace:")
+            
+            if st.button("Conectar y Limpiar Nube") and nombre_sheet:
+                with st.spinner("Accediendo a tu Drive y auditando datos..."):
+                    try:
+                        creds = st.session_state["google_creds"]
+                        # Construimos la conexión a Drive
+                        servicio_drive = build('drive', 'v3', credentials=creds)
+                        
+                        # Buscamos el archivo por nombre
+                        q = f"name contains '{nombre_sheet}' and mimeType='application/vnd.google-apps.spreadsheet'"
+                        res = servicio_drive.files().list(q=q, fields="files(id, name)").execute()
+                        archivos = res.get('files', [])
+                        
+                        if archivos:
+                            file_id = archivos[0]['id']
+                            # Construimos la conexión a Sheets y descargamos
+                            servicio_sheets = build('sheets', 'v4', credentials=creds)
+                            res_hoja = servicio_sheets.spreadsheets().values().get(
+                                spreadsheetId=file_id, range='A1:Z2000'
+                            ).execute()
+                            valores = res_hoja.get('values', [])
+                            
+                            if valores:
+                                # Transformamos a DataFrame
+                                df_ventas = pd.DataFrame(valores[1:], columns=valores[0])
+                                st.session_state["df_ventas"] = df_ventas
+                                st.success(f"✅ Sincronizado: {archivos[0]['name']}")
+                            else:
+                                st.warning("El archivo seleccionado está vacío.")
+                        else:
+                            st.error("No se encontró el archivo. Revisa el nombre exacto.")
+                    except Exception as e:
+                        st.error(f"Error de conexión a Drive: {e}")
+                        # Si el token caduca, forzamos re-login
+                        if "invalid_grant" in str(e):
+                            del st.session_state["google_creds"]
 
     # 2. PROCESAMIENTO IA Y GRÁFICOS (Solo si hay datos)
     if not df_ventas.empty:
