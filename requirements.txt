@@ -8,3 +8,4 @@ google-generativeai
 gspread
 google-auth
 plotly
+google-auth-oauthlib
