@@ -12,20 +12,26 @@ from googleapiclient.discovery import build
 import chardet
 import csv
 
+# ==========================================
 # --- 1. CONFIGURACIÓN DE PÁGINA Y ESTADOS ---
+# ==========================================
 st.set_page_config(page_title="SaaS Analytics Pro", page_icon="🏢", layout="wide")
 
-# Inicializamos la "memoria" de la aplicación
+# Inicializamos la "memoria" global de la aplicación
 if 'autenticado' not in st.session_state:
     st.session_state['autenticado'] = False
 if 'empresa_id' not in st.session_state:
     st.session_state['empresa_id'] = None
 if 'nombre_empresa' not in st.session_state:
     st.session_state['nombre_empresa'] = None
+if 'df_ventas' not in st.session_state:
+    st.session_state['df_ventas'] = pd.DataFrame()
 
-# --- 2. MÓDULO DE SEGURIDAD (LA BÓVEDA LIMPIA) ---
+# ==========================================
+# --- 2. MÓDULO DE SEGURIDAD (LA BÓVEDA) ---
+# ==========================================
 def verificar_login(email, password_plana):
-    """Se conecta a PostgreSQL para validar usuarios de tu SaaS."""
+    """Se conecta a PostgreSQL/Supabase para validar usuarios de tu SaaS."""
     try:
         motor_auth = create_engine(st.secrets["DB_AUTH_URI"])
         
@@ -51,7 +57,9 @@ def verificar_login(email, password_plana):
         st.error(f"Error de conexión con el servidor de autenticación: {e}")
         return False, None, None
 
+# ==========================================
 # --- 3. MÓDULOS DE INGESTIÓN Y LIMPIEZA ---
+# ==========================================
 def reparar_archivo_local(uploaded_file):
     """El Reparador Integrado: Cura archivos corruptos usando análisis de bytes y sniffer."""
     # Leemos la firma real del archivo
@@ -81,7 +89,7 @@ def reparar_archivo_local(uploaded_file):
         except:
             delim = ',' # Salvavidas por defecto
             
-        # Cirugía: Leemos el archivo saltando las filas destructivas (on_bad_lines='skip')
+        # Cirugía: Leemos el archivo saltando las filas destructivas
         df = pd.read_csv(
             uploaded_file, 
             encoding=cod, 
@@ -91,10 +99,12 @@ def reparar_archivo_local(uploaded_file):
         )
         return df
 
+# ==========================================
 # --- 4. EL CEREBRO IA ---
+# ==========================================
 @st.cache_data
 def mapear_columnas(lista_de_columnas):
-    """Usa Gemini para entender cualquier Excel."""
+    """Usa Gemini para entender semánticamente cualquier archivo."""
     try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
         modelo = genai.GenerativeModel('gemini-2.5-flash')
@@ -121,6 +131,7 @@ def mapear_columnas(lista_de_columnas):
         st.error(f"Error en la IA: {e}")
         return {}
 
+
 # ==========================================
 #        INTERFAZ DE USUARIO (FRONTEND)
 # ==========================================
@@ -137,13 +148,8 @@ if not st.session_state['autenticado']:
             submit = st.form_submit_button("Ingresar al Panel", use_container_width=True)
             
             if submit:
-                # Simulador de carga para UX
                 with st.spinner("Desencriptando credenciales..."):
-                    time.sleep(1) 
-                    
-                    # AQUÍ llamas a la BD. Para pruebas si no tienes la BD armada aún,
-                    # puedes comentar la línea de abajo y usar un bypass temporal:
-                    # exito, c_id, c_name = True, "123", "Empresa Demo S.A."
+                    time.sleep(1) # Efecto visual de seguridad
                     
                     exito, c_id, c_name = verificar_login(email_input, pass_input)
                     
@@ -151,30 +157,31 @@ if not st.session_state['autenticado']:
                         st.session_state['autenticado'] = True
                         st.session_state['empresa_id'] = c_id
                         st.session_state['nombre_empresa'] = c_name
-                        st.rerun() # Recarga la app para ocultar el login
+                        st.rerun() 
                     else:
                         st.error("❌ Credenciales incorrectas o usuario no encontrado.")
 
 # --- PANTALLA PRINCIPAL (PROTEGIDA) ---
 else:
-    # Sidebar Corporativo
+    # --- Sidebar Corporativo ---
     st.sidebar.title(f"🏢 {st.session_state['nombre_empresa']}")
     st.sidebar.caption(f"ID de Cliente: {st.session_state['empresa_id']}")
     st.sidebar.divider()
     
     if st.sidebar.button("Cerrar Sesión", type="primary"):
         st.session_state['autenticado'] = False
+        st.session_state['df_ventas'] = pd.DataFrame() # Limpiamos memoria de datos
+        if "google_creds" in st.session_state:
+            del st.session_state["google_creds"] # Borramos token de Google
         st.rerun()
 
     st.title("💸 Panel de Inteligencia de Negocios")
     st.markdown("Selecciona el origen de tus datos para comenzar el análisis.")
     
-    # 1. ENRUTADOR DE INGESTIÓN
+    # --- 1. ENRUTADOR DE INGESTIÓN ---
     fuente_datos = st.radio("Origen de datos:", ["Subir Archivo Local", "Sincronizar Google Drive"], horizontal=True)
     
-    df_ventas = pd.DataFrame()
-    
-# 1. CONFIGURACIÓN DEL MOTOR OAUTH (Coloca esto justo antes del primer if)
+    # Configuración base para el flujo OAuth de Google
     oauth_config = {
         "web": {
             "client_id": st.secrets["google_oauth"]["client_id"],
@@ -187,35 +194,33 @@ else:
         }
     }
     redirect_uri = st.secrets["google_oauth"]["redirect_uris"][0]
-    SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly', 'https://www.googleapis.com/auth/drive.readonly']
+    SCOPES = ['[https://www.googleapis.com/auth/spreadsheets.readonly](https://www.googleapis.com/auth/spreadsheets.readonly)', '[https://www.googleapis.com/auth/drive.readonly](https://www.googleapis.com/auth/drive.readonly)']
     flow = Flow.from_client_config(oauth_config, scopes=SCOPES, redirect_uri=redirect_uri)
 
-    # 2. CAPTURA DEL CÓDIGO DE GOOGLE (Gestión automática del regreso del login)
+    # Captura del código de Google (Gestión del regreso del login)
     if "code" in st.query_params:
         try:
             flow.fetch_token(code=st.query_params["code"])
             st.session_state["google_creds"] = flow.credentials
-            # Limpiamos la URL para una experiencia limpia
             st.query_params.clear()
             st.rerun()
         except Exception as e:
             st.error(f"Error de autorización: {e}")
 
-    # --- 3. BLOQUE REEMPLAZADO ---
+    # Lógica según la fuente elegida
     if fuente_datos == "Subir Archivo Local":
         archivo = st.file_uploader("Sube tu CSV o Excel", type=['csv', 'xlsx'])
         if archivo:
             with st.spinner("Reparando archivo en memoria..."):
-                # Tu función de limpieza local original
-                df_ventas = reparar_archivo_local(archivo)
-                st.session_state["df_ventas"] = df_ventas 
-                st.success("✅ Archivo curado y cargado.")
+                df_curado = reparar_archivo_local(archivo)
+                if not df_curado.empty:
+                    st.session_state["df_ventas"] = df_curado 
+                    st.success("✅ Archivo curado y cargado en el sistema.")
                 
     elif fuente_datos == "Sincronizar Google Drive":
-        # Verificamos si ya hay una sesión de Google activa
         if "google_creds" not in st.session_state:
             auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
-            st.info("Para sincronizar archivos de la nube, primero vincula tu cuenta.")
+            st.info("Para sincronizar archivos de la nube, primero vincula tu cuenta de Google.")
             st.link_button("🔐 Iniciar sesión con Google", auth_url)
         else:
             st.success("✅ Cuenta de Google vinculada.")
@@ -225,17 +230,15 @@ else:
                 with st.spinner("Accediendo a tu Drive y auditando datos..."):
                     try:
                         creds = st.session_state["google_creds"]
-                        # Construimos la conexión a Drive
                         servicio_drive = build('drive', 'v3', credentials=creds)
                         
-                        # Buscamos el archivo por nombre
+                        # Búsqueda
                         q = f"name contains '{nombre_sheet}' and mimeType='application/vnd.google-apps.spreadsheet'"
                         res = servicio_drive.files().list(q=q, fields="files(id, name)").execute()
                         archivos = res.get('files', [])
                         
                         if archivos:
                             file_id = archivos[0]['id']
-                            # Construimos la conexión a Sheets y descargamos
                             servicio_sheets = build('sheets', 'v4', credentials=creds)
                             res_hoja = servicio_sheets.spreadsheets().values().get(
                                 spreadsheetId=file_id, range='A1:Z2000'
@@ -243,9 +246,8 @@ else:
                             valores = res_hoja.get('values', [])
                             
                             if valores:
-                                # Transformamos a DataFrame
-                                df_ventas = pd.DataFrame(valores[1:], columns=valores[0])
-                                st.session_state["df_ventas"] = df_ventas
+                                df_nube = pd.DataFrame(valores[1:], columns=valores[0])
+                                st.session_state["df_ventas"] = df_nube
                                 st.success(f"✅ Sincronizado: {archivos[0]['name']}")
                             else:
                                 st.warning("El archivo seleccionado está vacío.")
@@ -253,38 +255,41 @@ else:
                             st.error("No se encontró el archivo. Revisa el nombre exacto.")
                     except Exception as e:
                         st.error(f"Error de conexión a Drive: {e}")
-                        # Si el token caduca, forzamos re-login
                         if "invalid_grant" in str(e):
                             del st.session_state["google_creds"]
 
-    # 2. PROCESAMIENTO IA Y GRÁFICOS (Solo si hay datos)
-    if not df_ventas.empty:
+    # --- 2. PROCESAMIENTO IA Y GRÁFICOS ---
+    df_actual = st.session_state["df_ventas"]
+    
+    if not df_actual.empty:
         st.divider()
         with st.spinner("🧠 El Cerebro IA está estructurando tu panel..."):
-            mapa_ia = mapear_columnas(list(df_ventas.columns))
+            mapa_ia = mapear_columnas(list(df_actual.columns))
             
         col_valor = mapa_ia.get('valor')
         col_cat = mapa_ia.get('categoria')
         col_fecha = mapa_ia.get('fecha')
         
-        # Filtro Inteligente
+        # Filtro Inteligente Lateral
         col_filtro = mapa_ia.get('filtro')
-        if col_filtro and col_filtro in df_ventas.columns:
-            seleccion = st.sidebar.selectbox(f"📍 Filtro: {col_filtro}", ["Todos"] + list(df_ventas[col_filtro].unique()))
+        if col_filtro and col_filtro in df_actual.columns:
+            seleccion = st.sidebar.selectbox(f"📍 Filtro: {col_filtro}", ["Todos"] + list(df_actual[col_filtro].unique()))
             if seleccion != "Todos":
-                df_ventas = df_ventas[df_ventas[col_filtro] == seleccion]
+                df_actual = df_actual[df_actual[col_filtro] == seleccion]
 
         # Interfaz de Gráficos (El Graficador Pro)
         c1, c2 = st.columns(2)
         
         with c1:
             st.subheader("📈 Tendencias")
-            if col_fecha and col_valor in df_ventas.columns:
-                # Limpiamos fechas
-                df_ventas[col_fecha] = pd.to_datetime(df_ventas[col_fecha], errors='coerce')
-                tendencia = df_ventas.groupby(df_ventas[col_fecha].dt.to_period("M").astype(str))[col_valor].sum().reset_index()
+            if col_fecha and col_valor in df_actual.columns:
+                # Preparamos los datos forzando el formato correcto (Fechas a Date, Valores a Número)
+                df_tendencia = df_actual.copy()
+                df_tendencia[col_fecha] = pd.to_datetime(df_tendencia[col_fecha], errors='coerce')
+                df_tendencia[col_valor] = pd.to_numeric(df_tendencia[col_valor], errors='coerce').fillna(0)
                 
-                # Selector de Plotly
+                tendencia = df_tendencia.groupby(df_tendencia[col_fecha].dt.to_period("M").astype(str))[col_valor].sum().reset_index()
+                
                 tipo_g = st.radio("Formato:", ["Líneas", "Área", "Barras"], horizontal=True, key="r1")
                 if tipo_g == "Líneas": fig = px.line(tendencia, x=col_fecha, y=col_valor)
                 elif tipo_g == "Área": fig = px.area(tendencia, x=col_fecha, y=col_valor)
@@ -293,10 +298,12 @@ else:
                 
         with c2:
             st.subheader(f"🗺️ Desglose por {col_cat if col_cat else 'Categoría'}")
-            if col_cat and col_valor in df_ventas.columns:
-                agrupado = df_ventas.groupby(col_cat)[col_valor].sum().reset_index()
+            if col_cat and col_valor in df_actual.columns:
+                df_proporcion = df_actual.copy()
+                df_proporcion[col_valor] = pd.to_numeric(df_proporcion[col_valor], errors='coerce').fillna(0)
                 
-                # Selector de Plotly para proporciones
+                agrupado = df_proporcion.groupby(col_cat)[col_valor].sum().reset_index()
+                
                 tipo_c = st.selectbox("Formato:", ["Donut (Profesional)", "Pastel (Clásico)", "Barras"], key="s1")
                 if tipo_c == "Donut (Profesional)": fig2 = px.pie(agrupado, names=col_cat, values=col_valor, hole=0.5)
                 elif tipo_c == "Pastel (Clásico)": fig2 = px.pie(agrupado, names=col_cat, values=col_valor)
