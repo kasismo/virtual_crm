@@ -194,7 +194,7 @@ else:
         }
     }
     redirect_uri = st.secrets["google_oauth"]["redirect_uris"][0]
-    SCOPES = ['[https://www.googleapis.com/auth/spreadsheets.readonly](https://www.googleapis.com/auth/spreadsheets.readonly)', '[https://www.googleapis.com/auth/drive.readonly](https://www.googleapis.com/auth/drive.readonly)']
+    SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly', 'https://www.googleapis.com/auth/drive.readonly']
     flow = Flow.from_client_config(oauth_config, scopes=SCOPES, redirect_uri=redirect_uri)
 
     # Captura del código de Google (Gestión del regreso del login)
