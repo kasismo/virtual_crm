@@ -198,14 +198,22 @@ else:
     flow = Flow.from_client_config(oauth_config, scopes=SCOPES, redirect_uri=redirect_uri)
 
     # Captura del código de Google (Gestión del regreso del login)
+# 2. CAPTURA DEL CÓDIGO DE GOOGLE (Gestión automática del regreso del login)
     if "code" in st.query_params:
+        # 1. Atrapamos el código temporal
+        codigo_secreto = st.query_params["code"]
+        
+        # 2. LIMPIAMOS LA URL INMEDIATAMENTE (Para evitar el bucle infinito)
+        st.query_params.clear()
+        
+        # 3. Intentamos canjearlo
         try:
-            flow.fetch_token(code=st.query_params["code"])
+            flow.fetch_token(code=codigo_secreto)
             st.session_state["google_creds"] = flow.credentials
-            st.query_params.clear()
             st.rerun()
         except Exception as e:
-            st.error(f"Error de autorización: {e}")
+            # Si el código era viejo o falló, ahora al menos la URL está limpia
+            st.error("El tiempo de inicio de sesión expiró. Por favor, haz clic en el botón de Google nuevamente.")
 
     # Lógica según la fuente elegida
     if fuente_datos == "Subir Archivo Local":
