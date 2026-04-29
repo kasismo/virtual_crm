@@ -231,10 +231,10 @@ else:
                     st.session_state["df_ventas"] = df_curado 
                     st.success("✅ Archivo curado y cargado en el sistema.")
                 
-        elif fuente_datos == "Sincronizar Google Drive":
-            if "google_creds" not in st.session_state:
-                auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
-                st.info("Para sincronizar archivos de la nube, primero vincula tu cuenta de Google.")
+    elif fuente_datos == "Sincronizar Google Drive":
+        if "google_creds" not in st.session_state:
+            auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
+            st.info("Para sincronizar archivos de la nube, primero vincula tu cuenta de Google.")
             
             # EL TRUCO: HTML puro formateado de forma segura con comillas simples triples
             boton_html = f'''
