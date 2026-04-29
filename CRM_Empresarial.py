@@ -197,31 +197,28 @@ else:
     SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly', 'https://www.googleapis.com/auth/drive.readonly']
     flow = Flow.from_client_config(oauth_config, scopes=SCOPES, redirect_uri=redirect_uri)
 
-   # 2. CAPTURA DEL CÓDIGO DE GOOGLE (Gestión a prueba de balas)
+   # 2. CAPTURA DEL CÓDIGO DE GOOGLE (Gestión de Pestaña Única)
     if "code" in st.query_params:
-        codigo = st.query_params["code"]
-        try:
-            # 1. Intentamos canjear el código
-            flow.fetch_token(code=codigo)
-            st.session_state["google_creds"] = flow.credentials
-            st.session_state["login_msg"] = "exito"
-        except Exception as e:
-            # 2. Si falla, guardamos el error en memoria, pero NO detenemos la app
-            st.session_state["login_msg"] = "error"
-            
-        # 3. LIMPIEZA ABSOLUTA: Borramos la URL y forzamos reinicio
+        # Candado: Solo intentamos canjear si NO tenemos las credenciales ya guardadas
+        if "google_creds" not in st.session_state:
+            codigo = st.query_params["code"]
+            try:
+                flow.fetch_token(code=codigo)
+                st.session_state["google_creds"] = flow.credentials
+                st.session_state["login_msg"] = "exito"
+            except Exception as e:
+                st.session_state["login_msg"] = "error"
+                
+        # Limpieza automática (El usuario ya no tiene que tocar la URL)
         st.query_params.clear()
-        time.sleep(0.2) # Micro-pausa para que el navegador asimile el cambio
         st.rerun()
 
-    # 4. Mostrar el resultado solo una vez después de limpiar la URL
+    # Mostrar el resultado (Fuera del bloque code)
     if "login_msg" in st.session_state:
         if st.session_state["login_msg"] == "exito":
             st.success("✅ Cuenta de Google vinculada correctamente.")
         elif st.session_state["login_msg"] == "error":
-            st.error("⚠️ Enlace expirado por seguridad. Ve a 'Sincronizar Google Drive' e inicia sesión de nuevo.")
-        
-        # Destruimos el mensaje para que no aparezca infinitamente
+            st.error("⚠️ Enlace expirado. Por favor, intenta conectar de nuevo.")
         del st.session_state["login_msg"]
 
     # Lógica según la fuente elegida
@@ -234,14 +231,23 @@ else:
                     st.session_state["df_ventas"] = df_curado 
                     st.success("✅ Archivo curado y cargado en el sistema.")
                 
-    elif fuente_datos == "Sincronizar Google Drive":
+elif fuente_datos == "Sincronizar Google Drive":
         if "google_creds" not in st.session_state:
             auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
             st.info("Para sincronizar archivos de la nube, primero vincula tu cuenta de Google.")
-            st.link_button("🔐 Iniciar sesión con Google", auth_url)
+            
+            # EL TRUCO: HTML puro formateado de forma segura con comillas simples triples
+            boton_html = f'''
+            <a href="{auth_url}" target="_self" 
+               style="display: inline-block; padding: 10px 20px; background-color: #1a73e8; color: white; text-align: center; text-decoration: none; border-radius: 8px; font-weight: bold; font-family: sans-serif;">
+                🔐 Iniciar sesión con Google
+            </a>
+            '''
+            st.markdown(boton_html, unsafe_allow_html=True)
+            
         else:
             st.success("✅ Cuenta de Google vinculada.")
-            nombre_sheet = st.text_input("Nombre del archivo en tu Google Workspace:")
+            # ... (aquí sigue el código normal donde pides el nombre del archivo)
             
             if st.button("Conectar y Limpiar Nube") and nombre_sheet:
                 with st.spinner("Accediendo a tu Drive y auditando datos..."):
