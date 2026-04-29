@@ -197,23 +197,32 @@ else:
     SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly', 'https://www.googleapis.com/auth/drive.readonly']
     flow = Flow.from_client_config(oauth_config, scopes=SCOPES, redirect_uri=redirect_uri)
 
-    # Captura del código de Google (Gestión del regreso del login)
-# 2. CAPTURA DEL CÓDIGO DE GOOGLE (Gestión automática del regreso del login)
+   # 2. CAPTURA DEL CÓDIGO DE GOOGLE (Gestión a prueba de balas)
     if "code" in st.query_params:
-        # 1. Atrapamos el código temporal
-        codigo_secreto = st.query_params["code"]
-        
-        # 2. LIMPIAMOS LA URL INMEDIATAMENTE (Para evitar el bucle infinito)
-        st.query_params.clear()
-        
-        # 3. Intentamos canjearlo
+        codigo = st.query_params["code"]
         try:
-            flow.fetch_token(code=codigo_secreto)
+            # 1. Intentamos canjear el código
+            flow.fetch_token(code=codigo)
             st.session_state["google_creds"] = flow.credentials
-            st.rerun()
+            st.session_state["login_msg"] = "exito"
         except Exception as e:
-            # Si el código era viejo o falló, ahora al menos la URL está limpia
-            st.error("El tiempo de inicio de sesión expiró. Por favor, haz clic en el botón de Google nuevamente.")
+            # 2. Si falla, guardamos el error en memoria, pero NO detenemos la app
+            st.session_state["login_msg"] = "error"
+            
+        # 3. LIMPIEZA ABSOLUTA: Borramos la URL y forzamos reinicio
+        st.query_params.clear()
+        time.sleep(0.2) # Micro-pausa para que el navegador asimile el cambio
+        st.rerun()
+
+    # 4. Mostrar el resultado solo una vez después de limpiar la URL
+    if "login_msg" in st.session_state:
+        if st.session_state["login_msg"] == "exito":
+            st.success("✅ Cuenta de Google vinculada correctamente.")
+        elif st.session_state["login_msg"] == "error":
+            st.error("⚠️ Enlace expirado por seguridad. Ve a 'Sincronizar Google Drive' e inicia sesión de nuevo.")
+        
+        # Destruimos el mensaje para que no aparezca infinitamente
+        del st.session_state["login_msg"]
 
     # Lógica según la fuente elegida
     if fuente_datos == "Subir Archivo Local":
