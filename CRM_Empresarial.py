@@ -299,12 +299,30 @@ else:
             st.subheader(f"🗺️ Desglose por {col_cat if col_cat else 'Categoría'}")
             if col_cat and col_valor in df_actual.columns:
                 df_proporcion = df_actual.copy()
+                # Forzamos los valores a números
                 df_proporcion[col_valor] = pd.to_numeric(df_proporcion[col_valor], errors='coerce').fillna(0)
+                
+                # 🛠️ FIX 1: Estandarización de Texto (Unifica 'electronics', 'Electronics', etc.)
+                df_proporcion[col_cat] = df_proporcion[col_cat].astype(str).str.strip().str.upper()
                 
                 agrupado = df_proporcion.groupby(col_cat)[col_valor].sum().reset_index()
                 
                 tipo_c = st.selectbox("Formato:", ["Donut (Profesional)", "Pastel (Clásico)", "Barras"], key="s1")
-                if tipo_c == "Donut (Profesional)": fig2 = px.pie(agrupado, names=col_cat, values=col_valor, hole=0.5)
-                elif tipo_c == "Pastel (Clásico)": fig2 = px.pie(agrupado, names=col_cat, values=col_valor)
-                else: fig2 = px.bar(agrupado, x=col_cat, y=col_valor, color=col_cat)
-                st.plotly_chart(fig2, use_container_width=True)
+                
+                # 🛠️ FIX 2: Lógica condicional para números negativos
+                if tipo_c in ["Donut (Profesional)", "Pastel (Clásico)"]:
+                    # Los gráficos circulares no soportan negativos. Filtramos solo los > 0.
+                    agrupado_positivo = agrupado[agrupado[col_valor] > 0]
+                    
+                    if agrupado_positivo.empty:
+                        st.warning("⚠️ Todos los valores son negativos o cero. Usa el formato 'Barras' para verlos.")
+                    else:
+                        if tipo_c == "Donut (Profesional)": 
+                            fig2 = px.pie(agrupado_positivo, names=col_cat, values=col_valor, hole=0.5)
+                        else: 
+                            fig2 = px.pie(agrupado_positivo, names=col_cat, values=col_valor)
+                        st.plotly_chart(fig2, use_container_width=True)
+                else: 
+                    # El formato 'Barras' SÍ soporta números rojos hacia abajo
+                    fig2 = px.bar(agrupado, x=col_cat, y=col_valor, color=col_cat)
+                    st.plotly_chart(fig2, use_container_width=True)
