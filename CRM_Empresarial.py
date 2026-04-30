@@ -235,13 +235,13 @@ else:
         if "google_creds" not in st.session_state:
             auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
             
-            st.info("Para analizar archivos de la nube, primero vincula tu cuenta de Google.")
+                st.info("Para analizar archivos de la nube, primero vincula tu cuenta de Google.")
             
-            # Advertencia de UX para el usuario
-            st.warning("⚠️ **Nota:** El inicio de sesión seguro se abrirá en una nueva pestaña. Cuando termines, continúa trabajando en la nueva pestaña.")
+                # Advertencia de UX para el usuario
+                st.warning("⚠️ **Nota:** El inicio de sesión seguro se abrirá en una nueva pestaña. Cuando termines, continúa trabajando en la nueva pestaña.")
             
-            # El botón nativo de Streamlit que abre la pestaña de forma segura
-            st.link_button("🔐 Iniciar sesión con Google", auth_url, use_container_width=True)
+                # El botón nativo de Streamlit que abre la pestaña de forma segura
+                st.link_button("🔐 Iniciar sesión con Google", auth_url, use_container_width=True)
             
             else:
                 st.success("✅ Cuenta de Google vinculada.")
