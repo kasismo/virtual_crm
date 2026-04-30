@@ -231,9 +231,9 @@ else:
                     st.session_state["df_ventas"] = df_curado 
                     st.success("✅ Archivo curado y cargado en el sistema.")
                 
-    elif fuente_datos == "Sincronizar Google Drive":
-        if "google_creds" not in st.session_state:
-            auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
+        elif fuente_datos == "Sincronizar Google Drive":
+            if "google_creds" not in st.session_state:
+                auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
             
                 st.info("Para analizar archivos de la nube, primero vincula tu cuenta de Google.")
             
