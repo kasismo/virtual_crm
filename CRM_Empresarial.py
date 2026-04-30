@@ -243,14 +243,14 @@ else:
             # El botón nativo de Streamlit que abre la pestaña de forma segura
             st.link_button("🔐 Iniciar sesión con Google", auth_url, use_container_width=True)
             
-        else:
-            st.success("✅ Cuenta de Google vinculada.")
-            nombre_sheet = st.text_input("Nombre del archivo en tu Google Workspace:")
-            # ... (el resto del código sigue igual)
+            else:
+                st.success("✅ Cuenta de Google vinculada.")
+                nombre_sheet = st.text_input("Nombre del archivo en tu Google Workspace:")
+                # ... (el resto del código sigue igual)
             
-        else:
-            st.success("✅ Cuenta de Google vinculada.")
-            # ... (aquí sigue el código normal donde pides el nombre del archivo)
+            else:
+                st.success("✅ Cuenta de Google vinculada.")
+                # ... (aquí sigue el código normal donde pides el nombre del archivo)
             
             if st.button("Conectar y Limpiar Nube") and nombre_sheet:
                 with st.spinner("Accediendo a tu Drive y auditando datos..."):
