@@ -234,16 +234,19 @@ else:
     elif fuente_datos == "Sincronizar Google Drive":
         if "google_creds" not in st.session_state:
             auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
-            st.info("Para sincronizar archivos de la nube, primero vincula tu cuenta de Google.")
             
-    # EL TRUCO: target="_top" escapa del iframe de Streamlit de forma segura
-            boton_html = f'''
-            <a href="{auth_url}" target="_top" 
-               style="display: inline-block; padding: 10px 20px; background-color: #1a73e8; color: white; text-align: center; text-decoration: none; border-radius: 8px; font-weight: bold; font-family: sans-serif;">
-                🔐 Iniciar sesión con Google
-            </a>
-            '''
-            st.markdown(boton_html, unsafe_allow_html=True)
+            st.info("Para analizar archivos de la nube, primero vincula tu cuenta de Google.")
+            
+            # Advertencia de UX para el usuario
+            st.warning("⚠️ **Nota:** El inicio de sesión seguro se abrirá en una nueva pestaña. Cuando termines, continúa trabajando en la nueva pestaña.")
+            
+            # El botón nativo de Streamlit que abre la pestaña de forma segura
+            st.link_button("🔐 Iniciar sesión con Google", auth_url, use_container_width=True)
+            
+        else:
+            st.success("✅ Cuenta de Google vinculada.")
+            nombre_sheet = st.text_input("Nombre del archivo en tu Google Workspace:")
+            # ... (el resto del código sigue igual)
             
         else:
             st.success("✅ Cuenta de Google vinculada.")
