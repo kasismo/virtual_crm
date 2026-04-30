@@ -236,9 +236,9 @@ else:
             auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
             st.info("Para sincronizar archivos de la nube, primero vincula tu cuenta de Google.")
             
-            # EL TRUCO: HTML puro formateado de forma segura con comillas simples triples
+    # EL TRUCO: target="_top" escapa del iframe de Streamlit de forma segura
             boton_html = f'''
-            <a href="{auth_url}" target="_self" 
+            <a href="{auth_url}" target="_top" 
                style="display: inline-block; padding: 10px 20px; background-color: #1a73e8; color: white; text-align: center; text-decoration: none; border-radius: 8px; font-weight: bold; font-family: sans-serif;">
                 🔐 Iniciar sesión con Google
             </a>
