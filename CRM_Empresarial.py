@@ -7,8 +7,6 @@ import io
 import json
 import google.generativeai as genai
 import plotly.express as px
-from google_auth_oauthlib.flow import Flow
-from googleapiclient.discovery import build
 import chardet
 import csv
 
@@ -58,38 +56,30 @@ def verificar_login(email, password_plana):
         return False, None, None
 
 # ==========================================
-# --- 3. MÓDULOS DE INGESTIÓN Y LIMPIEZA ---
+# --- 3. MÓDULOS DE INGESTIÓN (EL REPARADOR) ---
 # ==========================================
-def reparar_archivo_local(uploaded_file):
-    """El Reparador Integrado: Cura archivos corruptos usando análisis de bytes y sniffer."""
-    # Leemos la firma real del archivo
+def leer_archivo_seguro(uploaded_file):
+    """Motor Forense: Lee el archivo saltando errores de codificación."""
     cabecera_bytes = uploaded_file.read(4)
     uploaded_file.seek(0)
     
-    # 1. Tratamiento para Excel (Moderno o Antiguo)
     if cabecera_bytes.startswith(b'PK') or cabecera_bytes.startswith(b'\xd0\xcf') or uploaded_file.name.endswith(('.xlsx', '.xls')):
         return pd.read_excel(uploaded_file)
-        
-    # 2. Tratamiento Forense para CSV / Texto
     else:
-        # Extraemos una muestra para analizar el ADN
         muestra_bytes = uploaded_file.read(50000)
         uploaded_file.seek(0)
         
-        # Detectamos la codificación real
         resultado = chardet.detect(muestra_bytes)
         cod = resultado['encoding'] or 'utf-8'
         if cod.lower() == 'ascii': 
             cod = 'utf-8'
             
-        # Olfateamos el delimitador correcto
         muestra_texto = muestra_bytes.decode(cod, errors='replace')
         try:
             delim = csv.Sniffer().sniff(muestra_texto).delimiter
         except:
-            delim = ',' # Salvavidas por defecto
+            delim = ',' 
             
-        # Cirugía: Leemos el archivo saltando las filas destructivas
         df = pd.read_csv(
             uploaded_file, 
             encoding=cod, 
@@ -149,8 +139,7 @@ if not st.session_state['autenticado']:
             
             if submit:
                 with st.spinner("Desencriptando credenciales..."):
-                    time.sleep(1) # Efecto visual de seguridad
-                    
+                    time.sleep(1) 
                     exito, c_id, c_name = verificar_login(email_input, pass_input)
                     
                     if exito:
@@ -163,122 +152,111 @@ if not st.session_state['autenticado']:
 
 # --- PANTALLA PRINCIPAL (PROTEGIDA) ---
 else:
-    # --- Sidebar Corporativo ---
     st.sidebar.title(f"🏢 {st.session_state['nombre_empresa']}")
     st.sidebar.caption(f"ID de Cliente: {st.session_state['empresa_id']}")
     st.sidebar.divider()
     
     if st.sidebar.button("Cerrar Sesión", type="primary"):
         st.session_state['autenticado'] = False
-        st.session_state['df_ventas'] = pd.DataFrame() # Limpiamos memoria de datos
-        if "google_creds" in st.session_state:
-            del st.session_state["google_creds"] # Borramos token de Google
+        st.session_state['df_ventas'] = pd.DataFrame() 
         st.rerun()
 
     st.title("💸 Panel de Inteligencia de Negocios")
-    st.markdown("Selecciona el origen de tus datos para comenzar el análisis.")
+    st.markdown("Sube tu archivo. El sistema lo limpiará, resaltará errores en amarillo y la IA estructurará tu panel.")
     
-    # --- 1. ENRUTADOR DE INGESTIÓN ---
-    fuente_datos = st.radio("Origen de datos:", ["Subir Archivo Local", "Sincronizar Google Drive"], horizontal=True)
+    # --- 1. INGESTIÓN Y AUDITORÍA ---
+    archivo = st.file_uploader("Formato soportado: CSV o Excel.", type=['csv', 'xlsx', 'xls'])
     
-    # Configuración base para el flujo OAuth de Google
-    oauth_config = {
-        "web": {
-            "client_id": st.secrets["google_oauth"]["client_id"],
-            "project_id": st.secrets["google_oauth"]["project_id"],
-            "auth_uri": st.secrets["google_oauth"]["auth_uri"],
-            "token_uri": st.secrets["google_oauth"]["token_uri"],
-            "auth_provider_x509_cert_url": st.secrets["google_oauth"]["auth_provider_x509_cert_url"],
-            "client_secret": st.secrets["google_oauth"]["client_secret"],
-            "redirect_uris": st.secrets["google_oauth"]["redirect_uris"]
-        }
-    }
-    redirect_uri = st.secrets["google_oauth"]["redirect_uris"][0]
-    SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly', 'https://www.googleapis.com/auth/drive.readonly']
-    flow = Flow.from_client_config(oauth_config, scopes=SCOPES, redirect_uri=redirect_uri)
-
-   # 2. CAPTURA DEL CÓDIGO DE GOOGLE (Gestión de Pestaña Única)
-    if "code" in st.query_params:
-        # Candado: Solo intentamos canjear si NO tenemos las credenciales ya guardadas
-        if "google_creds" not in st.session_state:
-            codigo = st.query_params["code"]
-            try:
-                flow.fetch_token(code=codigo)
-                st.session_state["google_creds"] = flow.credentials
-                st.session_state["login_msg"] = "exito"
-            except Exception as e:
-                st.session_state["login_msg"] = "error"
+    if archivo:
+        with st.spinner("🏥 Pasando archivo por el quirófano de datos..."):
+            # 1. Lectura segura (reparación de bytes)
+            df_crudo = leer_archivo_seguro(archivo)
+            
+            if not df_crudo.empty:
+                # 2. Limpieza corporativa
+                df_crudo = df_crudo.replace(["", " "], pd.NA)
+                total_filas_orig = len(df_crudo)
                 
-        # Limpieza automática (El usuario ya no tiene que tocar la URL)
-        st.query_params.clear()
-        st.rerun()
-
-    # Mostrar el resultado (Fuera del bloque code)
-    if "login_msg" in st.session_state:
-        if st.session_state["login_msg"] == "exito":
-            st.success("✅ Cuenta de Google vinculada correctamente.")
-        elif st.session_state["login_msg"] == "error":
-            st.error("⚠️ Enlace expirado. Por favor, intenta conectar de nuevo.")
-        del st.session_state["login_msg"]
-
-    # Lógica según la fuente elegida
-    if fuente_datos == "Subir Archivo Local":
-        archivo = st.file_uploader("Sube tu CSV o Excel", type=['csv', 'xlsx'])
-        if archivo:
-            with st.spinner("Reparando archivo en memoria..."):
-                df_curado = reparar_archivo_local(archivo)
-                if not df_curado.empty:
-                    st.session_state["df_ventas"] = df_curado 
-                    st.success("✅ Archivo curado y cargado en el sistema.")
+                # Eliminar duplicados y reiniciar el índice
+                df_limpio = df_crudo.drop_duplicates().reset_index(drop=True)
+                duplicados_eliminados = total_filas_orig - len(df_limpio)
                 
-    elif fuente_datos == "Sincronizar Google Drive":
-        if "google_creds" not in st.session_state:
-            auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
-            
-            st.info("Para analizar archivos de la nube, primero vincula tu cuenta de Google.")
-            
-            # Advertencia de UX para el usuario
-            st.warning("⚠️ **Nota:** El inicio de sesión seguro se abrirá en una nueva pestaña. Cuando termines, continúa trabajando en la nueva pestaña.")
-            
-            # El botón nativo de Streamlit que abre la pestaña de forma segura
-            st.link_button("🔐 Iniciar sesión con Google", auth_url, use_container_width=True)
-            
-        else:
-            st.success("✅ Cuenta de Google vinculada.")
-            nombre_sheet = st.text_input("Nombre del archivo en tu Google Workspace:")
-            # ... (el resto del código sigue igual)
-            
-            if st.button("Conectar y Limpiar Nube") and nombre_sheet:
-                with st.spinner("Accediendo a tu Drive y auditando datos..."):
-                    try:
-                        creds = st.session_state["google_creds"]
-                        servicio_drive = build('drive', 'v3', credentials=creds)
-                        
-                        # Búsqueda
-                        q = f"name contains '{nombre_sheet}' and mimeType='application/vnd.google-apps.spreadsheet'"
-                        res = servicio_drive.files().list(q=q, fields="files(id, name)").execute()
-                        archivos = res.get('files', [])
-                        
-                        if archivos:
-                            file_id = archivos[0]['id']
-                            servicio_sheets = build('sheets', 'v4', credentials=creds)
-                            res_hoja = servicio_sheets.spreadsheets().values().get(
-                                spreadsheetId=file_id, range='A1:Z2000'
-                            ).execute()
-                            valores = res_hoja.get('values', [])
-                            
-                            if valores:
-                                df_nube = pd.DataFrame(valores[1:], columns=valores[0])
-                                st.session_state["df_ventas"] = df_nube
-                                st.success(f"✅ Sincronizado: {archivos[0]['name']}")
-                            else:
-                                st.warning("El archivo seleccionado está vacío.")
-                        else:
-                            st.error("No se encontró el archivo. Revisa el nombre exacto.")
-                    except Exception as e:
-                        st.error(f"Error de conexión a Drive: {e}")
-                        if "invalid_grant" in str(e):
-                            del st.session_state["google_creds"]
+                # Estandarizar ID
+                if 'ID' in df_limpio.columns:
+                    df_limpio = df_limpio.drop('ID', axis=1)
+                df_limpio.insert(0, 'ID', range(1, len(df_limpio) + 1))
+                
+                # Identificar filas incompletas (con valores NaN)
+                incomplete_rows_mask = df_limpio.isnull().any(axis=1)
+                indices_incompletas = df_limpio[incomplete_rows_mask].index # Guardamos qué filas están rotas
+                num_incompletas = len(indices_incompletas)
+                
+                # Rellenar vacíos para no romper la IA ni los gráficos
+                df_limpio = df_limpio.fillna("NO_DATO")
+                
+                # Guardamos en memoria
+                st.session_state["df_ventas"] = df_limpio
+                st.success("✅ Archivo auditado, curado y cargado en el sistema.")
+                
+                # --- PANEL DE AUDITORÍA (Métricas y Descarga) ---
+                st.subheader("📊 Resultados de la Auditoría")
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Filas Originales", f"{total_filas_orig:,}")
+                col2.metric("Duplicados Eliminados", f"{duplicados_eliminados:,}", delta_color="inverse")
+                col3.metric("Filas con Datos Faltantes", f"{num_incompletas:,}")
+                
+                if num_incompletas > 0:
+                    st.warning(f"⚠️ Se han detectado y resaltado en amarillo {num_incompletas:,} filas con datos incompletos en la vista previa.")
+                
+                # Botón de Descarga Curada
+                col_btn, _ = st.columns([1, 2])
+                with col_btn:
+                    csv_output = df_limpio.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="📥 Descargar Base Curada (CSV)",
+                        data=csv_output,
+                        file_name=f"datos_limpios.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                
+# --- DEFINIMOS EL PINCEL (ESTILO) ---
+                def resaltar_amarillo(row):
+                    """Pinta toda la fila de amarillo si pertenece a la lista de incompletas."""
+                    if row.name in indices_incompletas:
+                        return ['background-color: #ffd966; color: black'] * len(row)
+                    return [''] * len(row)
+                
+                # Botón de Descarga Curada (AHORA EN EXCEL PARA GUARDAR COLORES)
+                col_btn, _ = st.columns([1, 2])
+                with col_btn:
+                    # 1. Creamos un búfer en memoria RAM
+                    buffer = io.BytesIO()
+                    
+                    # 2. Aplicamos el estilo a TODO el dataframe y lo guardamos como Excel
+                    # Usamos openpyxl, que es el motor de Pandas que soporta estilos
+                    df_limpio.style.apply(resaltar_amarillo, axis=1).to_excel(
+                        buffer, 
+                        index=False, 
+                        engine='openpyxl'
+                    )
+                    
+                    # 3. Preparamos los bytes para la descarga
+                    excel_data = buffer.getvalue()
+                    
+                    st.download_button(
+                        label="📥 Descargar Base Auditada (Excel con Alertas)",
+                        data=excel_data,
+                        file_name="datos_auditados_alertas.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                
+                # --- VISTA PREVIA CON CELDAS AMARILLAS ---
+                st.write("**Vista Previa de los Datos:**")
+                
+                # Mostramos solo las primeras 100 filas en pantalla aplicando el mismo pincel
+                st.dataframe(df_limpio.head(100).style.apply(resaltar_amarillo, axis=1), use_container_width=True)
 
     # --- 2. PROCESAMIENTO IA Y GRÁFICOS ---
     df_actual = st.session_state["df_ventas"]
@@ -299,13 +277,12 @@ else:
             if seleccion != "Todos":
                 df_actual = df_actual[df_actual[col_filtro] == seleccion]
 
-        # Interfaz de Gráficos (El Graficador Pro)
+        # Interfaz de Gráficos
         c1, c2 = st.columns(2)
         
         with c1:
             st.subheader("📈 Tendencias")
             if col_fecha and col_valor in df_actual.columns:
-                # Preparamos los datos forzando el formato correcto (Fechas a Date, Valores a Número)
                 df_tendencia = df_actual.copy()
                 df_tendencia[col_fecha] = pd.to_datetime(df_tendencia[col_fecha], errors='coerce')
                 df_tendencia[col_valor] = pd.to_numeric(df_tendencia[col_valor], errors='coerce').fillna(0)
