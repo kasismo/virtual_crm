@@ -20,6 +20,8 @@ if 'empresa_id' not in st.session_state: st.session_state['empresa_id'] = None
 if 'nombre_empresa' not in st.session_state: st.session_state['nombre_empresa'] = None
 if 'df_ventas' not in st.session_state: st.session_state['df_ventas'] = pd.DataFrame()
 if 'mapa_ia' not in st.session_state: st.session_state['mapa_ia'] = {}
+if 'archivo_procesado' not in st.session_state: st.session_state['archivo_procesado'] = None
+if 'stats_auditoria' not in st.session_state: st.session_state['stats_auditoria'] = {'orig': 0, 'dups': 0}
 
 # ==========================================
 # --- 2. MÓDULOS DE BASE DE DATOS (LA BÓVEDA) ---
@@ -44,13 +46,10 @@ def verificar_login(email, password_plana):
         return False, None, None
 
 def guardar_estado_saas(empresa_id, mapping_json, df):
-    """Guarda el ADN de la IA y TODO el archivo directamente en SQL."""
     try:
         motor = create_engine(st.secrets["DB_AUTH_URI"])
         mapping_str = json.dumps(mapping_json)
-        # Convertimos la base de datos a texto plano (CSV String)
         datos_csv_str = df.to_csv(index=False)
-        
         query = text("""
             UPDATE empresas 
             SET ultimo_mapeo = :mapping, datos_guardados = :datos 
@@ -63,7 +62,6 @@ def guardar_estado_saas(empresa_id, mapping_json, df):
         st.error(f"Error al guardar persistencia: {e}")
 
 def recuperar_estado_saas(empresa_id):
-    """Descarga el archivo y el mapa desde SQL en un abrir y cerrar de ojos."""
     try:
         motor = create_engine(st.secrets["DB_AUTH_URI"])
         query = text("SELECT ultimo_mapeo, datos_guardados FROM empresas WHERE id = :id")
@@ -71,7 +69,6 @@ def recuperar_estado_saas(empresa_id):
             res = conexion.execute(query, {"id": empresa_id}).fetchone()
         
         mapa = json.loads(res[0]) if res and res[0] else {}
-        # Reconstruimos el DataFrame desde el texto plano
         df = pd.read_csv(io.StringIO(res[1])) if res and res[1] else pd.DataFrame()
         return mapa, df
     except Exception as e:
@@ -95,9 +92,6 @@ def leer_archivo_seguro(uploaded_file):
         except: delim = ',' 
         return pd.read_csv(uploaded_file, encoding=cod, sep=delim, on_bad_lines='skip', engine='python')
 
-# ==========================================
-# --- 4. EL CEREBRO IA ---
-# ==========================================
 @st.cache_data
 def mapear_columnas(lista_de_columnas):
     try:
@@ -140,64 +134,110 @@ if not st.session_state['autenticado']:
                         st.session_state['empresa_id'] = c_id
                         st.session_state['nombre_empresa'] = c_name
                         
-                        # --- CARGA MÁGICA MINUTO CERO ---
                         mapa_bd, df_bd = recuperar_estado_saas(c_id)
                         if not df_bd.empty:
                             st.session_state['mapa_ia'] = mapa_bd
                             st.session_state['df_ventas'] = df_bd
+                            # Si venimos de la BD, las métricas de carga asumen la base ya limpia
+                            st.session_state['stats_auditoria'] = {'orig': len(df_bd), 'dups': 0}
                             
                         st.rerun() 
                     else:
                         st.error("❌ Credenciales incorrectas.")
 
 else:
-    # SIDEBAR CORPORATIVO
+    # --- SIDEBAR CORPORATIVO ---
     st.sidebar.title(f"🏢 {st.session_state['nombre_empresa']}")
     st.sidebar.caption(f"ID de Cliente: {st.session_state['empresa_id']}")
     st.sidebar.divider()
     
     if st.sidebar.button("Cerrar Sesión", type="primary"):
-        st.session_state['autenticado'] = False
-        st.session_state['df_ventas'] = pd.DataFrame() 
-        st.session_state['mapa_ia'] = {}
+        for key in ['autenticado', 'df_ventas', 'mapa_ia', 'archivo_procesado', 'stats_auditoria']:
+            if key in st.session_state: del st.session_state[key]
         st.rerun()
 
     st.title("💸 Panel de Inteligencia de Negocios")
     
-    # --- ZONA DE ACTUALIZACIÓN (OCULTA POR DEFECTO) ---
+    # --- ZONA DE ACTUALIZACIÓN FLUIDA ---
     with st.expander("⚙️ Actualizar o Subir Nueva Base de Datos"):
         archivo = st.file_uploader("Sube tu archivo para sobrescribir los datos actuales.", type=['csv', 'xlsx', 'xls'])
-        if archivo:
+        
+        # El Candado: Solo procesamos si hay un archivo y NO lo hemos procesado antes en esta sesión
+        if archivo and st.session_state.get('archivo_procesado') != archivo.name:
             with st.spinner("🏥 Operando archivo y actualizando servidores..."):
                 df_crudo = leer_archivo_seguro(archivo)
                 if not df_crudo.empty:
                     df_crudo = df_crudo.replace(["", " "], pd.NA)
+                    total_orig = len(df_crudo)
+                    
                     df_limpio = df_crudo.drop_duplicates().reset_index(drop=True)
+                    dups = total_orig - len(df_limpio)
+                    
                     if 'ID' in df_limpio.columns: df_limpio = df_limpio.drop('ID', axis=1)
                     df_limpio.insert(0, 'ID', range(1, len(df_limpio) + 1))
+                    
+                    # Marcamos faltantes antes de rellenar
                     df_limpio = df_limpio.fillna("NO_DATO")
                     
-                    # Analizamos con IA y Guardamos en BD de un solo golpe
                     nuevo_mapa = mapear_columnas(list(df_limpio.columns))
                     guardar_estado_saas(st.session_state['empresa_id'], nuevo_mapa, df_limpio)
                     
-                    # Actualizamos memoria viva
+                    # Actualizamos memoria viva y activamos el candado
                     st.session_state["df_ventas"] = df_limpio
                     st.session_state["mapa_ia"] = nuevo_mapa
-                    st.success("✅ Sistema actualizado. Recarga la página para ver los cambios.")
-                    time.sleep(2)
-                    st.rerun()
+                    st.session_state['archivo_procesado'] = archivo.name
+                    st.session_state['stats_auditoria'] = {'orig': total_orig, 'dups': dups}
+                    
+                    st.success("✅ Sistema actualizado. Fluyendo datos al panel...")
+                    # ¡NO HAY st.rerun() AQUÍ! El código fluye libremente hacia abajo.
 
     # --- RENDERIZADO DEL PANEL PRINCIPAL ---
-    df_actual = st.session_state["df_ventas"]
-    mapa_ia = st.session_state["mapa_ia"]
+    df_actual = st.session_state.get("df_ventas", pd.DataFrame())
+    mapa_ia = st.session_state.get("mapa_ia", {})
     
     if df_actual.empty:
         st.info("👋 ¡Bienvenido! Despliega el menú 'Actualizar Base de Datos' de arriba para subir tu primer archivo.")
     else:
+        # --- 1. PANEL DE AUDITORÍA Y LIMPIEZA (Siempre visible con datos) ---
         st.success("⚡ Sistema cargado y sincronizado desde la nube.")
+        
+        # Detectamos datos incompletos buscando la firma "NO_DATO"
+        mask_incompletas = df_actual.astype(str).eq("NO_DATO").any(axis=1)
+        indices_incompletas = df_actual[mask_incompletas].index 
+        num_incompletas = len(indices_incompletas)
+        
+        st.subheader("📊 Auditoría Forense de Datos")
+        stats = st.session_state['stats_auditoria']
+        
+        c_m1, c_m2, c_m3 = st.columns(3)
+        c_m1.metric("Filas Evaluadas", f"{stats['orig']:,}")
+        c_m2.metric("Duplicados Eliminados", f"{stats['dups']:,}", delta_color="inverse")
+        c_m3.metric("Filas con Datos Faltantes", f"{num_incompletas:,}")
+        
+        if num_incompletas > 0:
+            st.warning(f"⚠️ Se han detectado y resaltado en amarillo {num_incompletas:,} filas con datos incompletos.")
+            
+        def resaltar_amarillo(row):
+            if row.name in indices_incompletas: return ['background-color: #ffd966; color: black'] * len(row)
+            return [''] * len(row)
+            
+        # Botón de Descarga Excel
+        col_btn, _ = st.columns([1, 2])
+        with col_btn:
+            buffer = io.BytesIO()
+            df_actual.style.apply(resaltar_amarillo, axis=1).to_excel(buffer, index=False, engine='openpyxl')
+            st.download_button(
+                "📥 Descargar Base Auditada (Excel)", 
+                data=buffer.getvalue(), 
+                file_name="datos_auditados_alertas.xlsx", 
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                use_container_width=True
+            )
+            
+        st.dataframe(df_actual.head(100).style.apply(resaltar_amarillo, axis=1), use_container_width=True)
         st.divider()
         
+        # --- 2. LOS GRÁFICOS INTELIGENTES ---
         col_valor = mapa_ia.get('valor')
         col_cat = mapa_ia.get('categoria')
         col_fecha = mapa_ia.get('fecha')
@@ -211,7 +251,6 @@ else:
         
         with c1:
             st.subheader("📈 Tendencias")
-            # FIX: Sintaxis de Python arreglada para evitar que el gráfico desaparezca
             if (col_fecha in df_actual.columns) and (col_valor in df_actual.columns):
                 df_tendencia = df_actual.copy()
                 df_tendencia[col_fecha] = pd.to_datetime(df_tendencia[col_fecha], errors='coerce')
