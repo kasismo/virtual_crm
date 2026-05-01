@@ -15,87 +15,84 @@ import csv
 # ==========================================
 st.set_page_config(page_title="SaaS Analytics Pro", page_icon="🏢", layout="wide")
 
-if 'autenticado' not in st.session_state:
-    st.session_state['autenticado'] = False
-if 'empresa_id' not in st.session_state:
-    st.session_state['empresa_id'] = None
-if 'nombre_empresa' not in st.session_state:
-    st.session_state['nombre_empresa'] = None
-if 'df_ventas' not in st.session_state:
-    st.session_state['df_ventas'] = pd.DataFrame()
-if 'mapa_ia' not in st.session_state:
-    st.session_state['mapa_ia'] = {}
+if 'autenticado' not in st.session_state: st.session_state['autenticado'] = False
+if 'empresa_id' not in st.session_state: st.session_state['empresa_id'] = None
+if 'nombre_empresa' not in st.session_state: st.session_state['nombre_empresa'] = None
+if 'df_ventas' not in st.session_state: st.session_state['df_ventas'] = pd.DataFrame()
+if 'mapa_ia' not in st.session_state: st.session_state['mapa_ia'] = {}
 
 # ==========================================
-# --- 2. MÓDULOS DE BASE DE DATOS ---
+# --- 2. MÓDULOS DE BASE DE DATOS (LA BÓVEDA) ---
 # ==========================================
 def verificar_login(email, password_plana):
     try:
-        motor_auth = create_engine(st.secrets["DB_AUTH_URI"])
+        motor = create_engine(st.secrets["DB_AUTH_URI"])
         query = text("""
             SELECT u.password_hash, u.empresa_id, e.nombre_empresa 
-            FROM usuarios u
-            JOIN empresas e ON u.empresa_id = e.id
+            FROM usuarios u JOIN empresas e ON u.empresa_id = e.id
             WHERE TRIM(u.email) = :email
         """)
-        with motor_auth.connect() as conexion:
+        with motor.connect() as conexion:
             resultado = conexion.execute(query, {"email": email.strip()}).fetchone()
             
         if resultado:
-            hash_bd = resultado[0].strip().encode('utf-8') 
-            pass_bytes = password_plana.strip().encode('utf-8')
-            if bcrypt.checkpw(pass_bytes, hash_bd):
+            if bcrypt.checkpw(password_plana.strip().encode('utf-8'), resultado[0].strip().encode('utf-8')):
                 return True, resultado[1], resultado[2] 
         return False, None, None
     except Exception as e:
         st.error(f"Error de autenticación: {e}")
         return False, None, None
 
-def guardar_mapeo_sql(empresa_id, mapping_json):
-    """Guarda el ADN del archivo en la base de datos para no gastar IA."""
+def guardar_estado_saas(empresa_id, mapping_json, df):
+    """Guarda el ADN de la IA y TODO el archivo directamente en SQL."""
     try:
         motor = create_engine(st.secrets["DB_AUTH_URI"])
         mapping_str = json.dumps(mapping_json)
-        query = text("UPDATE empresas SET ultimo_mapeo = :mapping WHERE id = :id")
+        # Convertimos la base de datos a texto plano (CSV String)
+        datos_csv_str = df.to_csv(index=False)
+        
+        query = text("""
+            UPDATE empresas 
+            SET ultimo_mapeo = :mapping, datos_guardados = :datos 
+            WHERE id = :id
+        """)
         with motor.connect() as conexion:
-            conexion.execute(query, {"mapping": mapping_str, "id": empresa_id})
+            conexion.execute(query, {"mapping": mapping_str, "datos": datos_csv_str, "id": empresa_id})
             conexion.commit()
     except Exception as e:
-        pass # Fallo silencioso, no rompemos la app si no puede guardar
+        st.error(f"Error al guardar persistencia: {e}")
 
-def recuperar_mapeo_sql(empresa_id):
-    """Busca si esta empresa ya tiene un mapeo guardado."""
+def recuperar_estado_saas(empresa_id):
+    """Descarga el archivo y el mapa desde SQL en un abrir y cerrar de ojos."""
     try:
         motor = create_engine(st.secrets["DB_AUTH_URI"])
-        query = text("SELECT ultimo_mapeo FROM empresas WHERE id = :id")
+        query = text("SELECT ultimo_mapeo, datos_guardados FROM empresas WHERE id = :id")
         with motor.connect() as conexion:
-            resultado = conexion.execute(query, {"id": empresa_id}).fetchone()
-        if resultado and resultado[0]:
-            return json.loads(resultado[0])
-        return {}
-    except:
-        return {}
+            res = conexion.execute(query, {"id": empresa_id}).fetchone()
+        
+        mapa = json.loads(res[0]) if res and res[0] else {}
+        # Reconstruimos el DataFrame desde el texto plano
+        df = pd.read_csv(io.StringIO(res[1])) if res and res[1] else pd.DataFrame()
+        return mapa, df
+    except Exception as e:
+        return {}, pd.DataFrame()
 
 # ==========================================
-# --- 3. MÓDULOS DE INGESTIÓN (EL REPARADOR) ---
+# --- 3. INGESTIÓN Y IA ---
 # ==========================================
 def leer_archivo_seguro(uploaded_file):
     cabecera_bytes = uploaded_file.read(4)
     uploaded_file.seek(0)
-    
     if cabecera_bytes.startswith(b'PK') or cabecera_bytes.startswith(b'\xd0\xcf') or uploaded_file.name.endswith(('.xlsx', '.xls')):
         return pd.read_excel(uploaded_file)
     else:
         muestra_bytes = uploaded_file.read(50000)
         uploaded_file.seek(0)
-        resultado = chardet.detect(muestra_bytes)
-        cod = resultado['encoding'] or 'utf-8'
+        cod = chardet.detect(muestra_bytes)['encoding'] or 'utf-8'
         if cod.lower() == 'ascii': cod = 'utf-8'
-            
-        muestra_texto = muestra_bytes.decode(cod, errors='replace')
-        try: delim = csv.Sniffer().sniff(muestra_texto).delimiter
+        texto = muestra_bytes.decode(cod, errors='replace')
+        try: delim = csv.Sniffer().sniff(texto).delimiter
         except: delim = ',' 
-            
         return pd.read_csv(uploaded_file, encoding=cod, sep=delim, on_bad_lines='skip', engine='python')
 
 # ==========================================
@@ -135,28 +132,28 @@ if not st.session_state['autenticado']:
             email_input = st.text_input("Correo Corporativo")
             pass_input = st.text_input("Contraseña", type="password")
             if st.form_submit_button("Ingresar al Panel", use_container_width=True):
-                with st.spinner("Desencriptando credenciales..."):
+                with st.spinner("Desencriptando y cargando tu ecosistema..."):
                     time.sleep(1) 
                     exito, c_id, c_name = verificar_login(email_input, pass_input)
                     if exito:
                         st.session_state['autenticado'] = True
                         st.session_state['empresa_id'] = c_id
                         st.session_state['nombre_empresa'] = c_name
+                        
+                        # --- CARGA MÁGICA MINUTO CERO ---
+                        mapa_bd, df_bd = recuperar_estado_saas(c_id)
+                        if not df_bd.empty:
+                            st.session_state['mapa_ia'] = mapa_bd
+                            st.session_state['df_ventas'] = df_bd
+                            
                         st.rerun() 
                     else:
-                        st.error("❌ Credenciales incorrectas o usuario no encontrado.")
+                        st.error("❌ Credenciales incorrectas.")
 
 else:
     # SIDEBAR CORPORATIVO
     st.sidebar.title(f"🏢 {st.session_state['nombre_empresa']}")
     st.sidebar.caption(f"ID de Cliente: {st.session_state['empresa_id']}")
-    st.sidebar.divider()
-    
-    # Botón mágico para resetear la memoria de la IA si el cliente sube un Excel con otras columnas
-    if st.sidebar.button("🔄 Re-escanear estructura con IA"):
-        st.session_state['mapa_ia'] = {}
-        st.sidebar.success("Memoria borrada. El próximo archivo se analizará desde cero.")
-    
     st.sidebar.divider()
     
     if st.sidebar.button("Cerrar Sesión", type="primary"):
@@ -166,79 +163,41 @@ else:
         st.rerun()
 
     st.title("💸 Panel de Inteligencia de Negocios")
-    st.markdown("Sube tu archivo. El sistema lo auditará y estructurará usando tu memoria persistente.")
     
-    # --- 1. INGESTIÓN Y AUDITORÍA ---
-    archivo = st.file_uploader("Formato soportado: CSV o Excel.", type=['csv', 'xlsx', 'xls'])
-    
-    if archivo:
-        with st.spinner("🏥 Pasando archivo por el quirófano de datos..."):
-            df_crudo = leer_archivo_seguro(archivo)
-            
-            if not df_crudo.empty:
-                df_crudo = df_crudo.replace(["", " "], pd.NA)
-                total_filas_orig = len(df_crudo)
-                
-                df_limpio = df_crudo.drop_duplicates().reset_index(drop=True)
-                duplicados_eliminados = total_filas_orig - len(df_limpio)
-                
-                if 'ID' in df_limpio.columns: df_limpio = df_limpio.drop('ID', axis=1)
-                df_limpio.insert(0, 'ID', range(1, len(df_limpio) + 1))
-                
-                incomplete_rows_mask = df_limpio.isnull().any(axis=1)
-                indices_incompletas = df_limpio[incomplete_rows_mask].index 
-                num_incompletas = len(indices_incompletas)
-                
-                df_limpio = df_limpio.fillna("NO_DATO")
-                st.session_state["df_ventas"] = df_limpio
-                
-                # --- MAGIA DE PERSISTENCIA ---
-                # Si no tenemos un mapa en la sesión, lo buscamos en SQL. 
-                if not st.session_state['mapa_ia']:
-                    mapa_guardado = recuperar_mapeo_sql(st.session_state['empresa_id'])
+    # --- ZONA DE ACTUALIZACIÓN (OCULTA POR DEFECTO) ---
+    with st.expander("⚙️ Actualizar o Subir Nueva Base de Datos"):
+        archivo = st.file_uploader("Sube tu archivo para sobrescribir los datos actuales.", type=['csv', 'xlsx', 'xls'])
+        if archivo:
+            with st.spinner("🏥 Operando archivo y actualizando servidores..."):
+                df_crudo = leer_archivo_seguro(archivo)
+                if not df_crudo.empty:
+                    df_crudo = df_crudo.replace(["", " "], pd.NA)
+                    df_limpio = df_crudo.drop_duplicates().reset_index(drop=True)
+                    if 'ID' in df_limpio.columns: df_limpio = df_limpio.drop('ID', axis=1)
+                    df_limpio.insert(0, 'ID', range(1, len(df_limpio) + 1))
+                    df_limpio = df_limpio.fillna("NO_DATO")
                     
-                    if mapa_guardado:
-                        st.session_state['mapa_ia'] = mapa_guardado
-                        st.toast("⚡ ADN de datos cargado desde la base de datos (Ahorro de IA).")
-                    else:
-                        st.toast("🧠 Analizando archivo con Inteligencia Artificial por primera vez...")
-                        nuevo_mapa = mapear_columnas(list(df_limpio.columns))
-                        st.session_state['mapa_ia'] = nuevo_mapa
-                        guardar_mapeo_sql(st.session_state['empresa_id'], nuevo_mapa)
-                
-                st.success("✅ Archivo auditado y cargado en el sistema.")
-                
-                # PANEL DE AUDITORÍA
-                st.subheader("📊 Resultados de la Auditoría")
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Filas Originales", f"{total_filas_orig:,}")
-                col2.metric("Duplicados Eliminados", f"{duplicados_eliminados:,}", delta_color="inverse")
-                col3.metric("Datos Faltantes", f"{num_incompletas:,}")
-                
-                if num_incompletas > 0:
-                    st.warning(f"⚠️ Se detectaron {num_incompletas:,} filas con datos incompletos (resaltadas en amarillo).")
-                
-                # DESCARGA EXCEL CON COLORES
-                def resaltar_amarillo(row):
-                    if row.name in indices_incompletas: return ['background-color: #ffd966; color: black'] * len(row)
-                    return [''] * len(row)
-                
-                col_btn, _ = st.columns([1, 2])
-                with col_btn:
-                    buffer = io.BytesIO()
-                    df_limpio.style.apply(resaltar_amarillo, axis=1).to_excel(buffer, index=False, engine='openpyxl')
-                    excel_data = buffer.getvalue()
-                    st.download_button("📥 Descargar Base Auditada (Excel)", data=excel_data, file_name="datos_auditados.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-                
-                st.write("**Vista Previa:**")
-                st.dataframe(df_limpio.head(100).style.apply(resaltar_amarillo, axis=1), use_container_width=True)
+                    # Analizamos con IA y Guardamos en BD de un solo golpe
+                    nuevo_mapa = mapear_columnas(list(df_limpio.columns))
+                    guardar_estado_saas(st.session_state['empresa_id'], nuevo_mapa, df_limpio)
+                    
+                    # Actualizamos memoria viva
+                    st.session_state["df_ventas"] = df_limpio
+                    st.session_state["mapa_ia"] = nuevo_mapa
+                    st.success("✅ Sistema actualizado. Recarga la página para ver los cambios.")
+                    time.sleep(2)
+                    st.rerun()
 
-    # --- 2. PROCESAMIENTO GRÁFICO ---
+    # --- RENDERIZADO DEL PANEL PRINCIPAL ---
     df_actual = st.session_state["df_ventas"]
     mapa_ia = st.session_state["mapa_ia"]
     
-    if not df_actual.empty and mapa_ia:
+    if df_actual.empty:
+        st.info("👋 ¡Bienvenido! Despliega el menú 'Actualizar Base de Datos' de arriba para subir tu primer archivo.")
+    else:
+        st.success("⚡ Sistema cargado y sincronizado desde la nube.")
         st.divider()
+        
         col_valor = mapa_ia.get('valor')
         col_cat = mapa_ia.get('categoria')
         col_fecha = mapa_ia.get('fecha')
@@ -252,7 +211,8 @@ else:
         
         with c1:
             st.subheader("📈 Tendencias")
-            if col_fecha and col_valor in df_actual.columns:
+            # FIX: Sintaxis de Python arreglada para evitar que el gráfico desaparezca
+            if (col_fecha in df_actual.columns) and (col_valor in df_actual.columns):
                 df_tendencia = df_actual.copy()
                 df_tendencia[col_fecha] = pd.to_datetime(df_tendencia[col_fecha], errors='coerce')
                 df_tendencia[col_valor] = pd.to_numeric(df_tendencia[col_valor], errors='coerce').fillna(0)
@@ -263,22 +223,23 @@ else:
                 elif tipo_g == "Área": fig = px.area(tendencia, x=col_fecha, y=col_valor)
                 else: fig = px.bar(tendencia, x=col_fecha, y=col_valor)
                 st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("IA no detectó columnas de Fecha y Valor compatibles.")
                 
         with c2:
             st.subheader(f"🗺️ Desglose por {col_cat if col_cat else 'Categoría'}")
-            if col_cat and col_valor in df_actual.columns:
+            if (col_cat in df_actual.columns) and (col_valor in df_actual.columns):
                 df_proporcion = df_actual.copy()
                 df_proporcion[col_valor] = pd.to_numeric(df_proporcion[col_valor], errors='coerce').fillna(0)
-                df_proporcion[col_cat] = df_proporcion[col_cat].astype(str).str.strip().str.upper() # FIX MAYÚSCULAS
+                df_proporcion[col_cat] = df_proporcion[col_cat].astype(str).str.strip().str.upper() 
                 
                 agrupado = df_proporcion.groupby(col_cat)[col_valor].sum().reset_index()
                 tipo_c = st.selectbox("Formato:", ["Donut (Profesional)", "Pastel (Clásico)", "Barras"], key="s1")
                 
-                # FIX NÚMEROS NEGATIVOS
                 if tipo_c in ["Donut (Profesional)", "Pastel (Clásico)"]:
                     agrupado_positivo = agrupado[agrupado[col_valor] > 0]
                     if agrupado_positivo.empty:
-                        st.warning("⚠️ Valores negativos. Usa 'Barras'.")
+                        st.warning("⚠️ Valores negativos o cero. Usa 'Barras'.")
                     else:
                         if tipo_c == "Donut (Profesional)": fig2 = px.pie(agrupado_positivo, names=col_cat, values=col_valor, hole=0.5)
                         else: fig2 = px.pie(agrupado_positivo, names=col_cat, values=col_valor)
@@ -286,3 +247,5 @@ else:
                 else: 
                     fig2 = px.bar(agrupado, x=col_cat, y=col_valor, color=col_cat)
                     st.plotly_chart(fig2, use_container_width=True)
+            else:
+                st.warning("IA no detectó columnas de Categoría y Valor compatibles.")
