@@ -9,7 +9,8 @@ import google.generativeai as genai
 import plotly.express as px
 import chardet
 import csv
-
+import smtplib
+from email.message import EmailMessage
 # ==========================================
 # --- 1. CONFIGURACIÓN DE PÁGINA Y ESTADOS ---
 # ==========================================
@@ -73,6 +74,50 @@ def recuperar_estado_saas(empresa_id):
         return mapa, df
     except Exception as e:
         return {}, pd.DataFrame()
+
+def enviar_ticket_soporte(nombre_empresa, id_empresa, mensaje, adjunto):
+    """Crea y envía un correo electrónico formateado al CTO (Tú)."""
+    # Usaremos st.secrets para proteger tus credenciales
+    remitente = st.secrets["email"]["usuario"] 
+    password = st.secrets["email"]["password"] 
+    destinatario = "tu_correo_personal@gmail.com" # <-- Pon tu correo aquí
+
+    # 1. Armamos la estructura del correo
+    msg = EmailMessage()
+    msg['Subject'] = f"🚨 Ticket de Soporte: {nombre_empresa} (ID: {id_empresa})"
+    msg['From'] = remitente
+    msg['To'] = destinatario
+    
+    # El cuerpo del mensaje
+    cuerpo_correo = f"""
+    Ha ingresado una nueva solicitud de soporte desde el Panel SaaS.
+    
+    🏢 Empresa: {nombre_empresa}
+    🆔 ID de Cliente: {id_empresa}
+    
+    📝 Mensaje del cliente:
+    -------------------------------------------
+    {mensaje}
+    -------------------------------------------
+    """
+    msg.set_content(cuerpo_correo)
+
+    # 2. Procesamos la captura de pantalla si el cliente subió una
+    if adjunto is not None:
+        adjunto_bytes = adjunto.read()
+        # Detectamos la extensión para adjuntarlo correctamente
+        tipo = adjunto.name.split('.')[-1].lower()
+        formato = 'jpeg' if tipo == 'jpg' else tipo
+        msg.add_attachment(adjunto_bytes, maintype='image', subtype=formato, filename=adjunto.name)
+
+    # 3. Nos conectamos a Google y disparamos el correo
+    try:
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+            smtp.login(remitente, password)
+            smtp.send_message(msg)
+        return True
+    except Exception as e:
+        return False
 
 # ==========================================
 # --- 3. INGESTIÓN Y IA ---
