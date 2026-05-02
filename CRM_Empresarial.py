@@ -80,7 +80,7 @@ def enviar_ticket_soporte(nombre_empresa, id_empresa, mensaje, adjunto):
     # Usaremos st.secrets para proteger tus credenciales
     remitente = st.secrets["email"]["usuario"] 
     password = st.secrets["email"]["password"] 
-    destinatario = "tu_correo_personal@gmail.com" # <-- Pon tu correo aquí
+    destinatario = "fakuokey@gmail.com" # <-- Pon tu correo aquí
 
     # 1. Armamos la estructura del correo
     msg = EmailMessage()
