@@ -355,15 +355,34 @@ else:
         st.divider()
         st.subheader("🗂️ Base de Datos en Vivo")
         
-        # Disparamos la consulta SQL a Supabase pasando el ID de la empresa logueada
-        df_crm = obtener_clientes(st.session_state['empresa_id'])
-        
-        if df_crm.empty:
-            st.info("Aún no tienes clientes registrados. ¡Agrega el primero en el panel de arriba!")
-        else:
-            # data_editor reemplaza al dataframe estático. 
-            # hide_index=True quita los números feos de la izquierda.
-            st.data_editor(df_crm, use_container_width=True, hide_index=True)
+def obtener_clientes(empresa_id):
+    """Consulta la base de datos viva y devuelve los clientes en formato Pandas"""
+    try:
+        motor = create_engine(st.secrets["DB_AUTH_URI"])
+        query = text("SELECT id, nombre_cliente, contacto, estado, fecha_registro FROM clientes_crm WHERE empresa_id = :id ORDER BY id DESC")
+        with motor.connect() as conexion:
+            # pd.read_sql es mágico: ejecuta la query y te arma el DataFrame al instante
+            df_clientes = pd.read_sql(query, conexion, params={"id": empresa_id})
+        return df_clientes
+    except Exception as e:
+        st.error(f"Error al cargar la base de clientes: {e}")
+        return pd.DataFrame()
+
+def insertar_cliente(empresa_id, nombre, contacto, estado):
+    """Inyecta una nueva fila en la tabla clientes_crm de Supabase"""
+    try:
+        motor = create_engine(st.secrets["DB_AUTH_URI"])
+        query = text("""
+            INSERT INTO clientes_crm (empresa_id, nombre_cliente, contacto, estado)
+            VALUES (:emp_id, :nombre, :contacto, :estado)
+        """)
+        with motor.connect() as conexion:
+            conexion.execute(query, {"emp_id": empresa_id, "nombre": nombre, "contacto": contacto, "estado": estado})
+            conexion.commit()
+        return True
+    except Exception as e:
+        st.error(f"Error al guardar cliente en el servidor: {e}")
+        return False
 
     # ==========================================
     # --- PANTALLA 3: IMPORTACIÓN E INGESTIÓN ---
