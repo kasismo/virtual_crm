@@ -206,7 +206,7 @@ else:
     
     st.sidebar.divider()
     
-    # --- EL WIDGET DE SOPORTE (Se queda fijo en el sidebar para toda la app) ---
+    # --- EL WIDGET DE SOPORTE (Se queda fijo en el sidebar) ---
     with st.sidebar.popover("💬 Ayuda y Soporte Técnico", use_container_width=True):
         st.markdown(f"**🤖 Asistente de Industrias Faku**\n\n¡Hola equipo de **{st.session_state['nombre_empresa']}**! ¿Tienen algún problema?")
         with st.form("form_soporte", clear_on_submit=True):
@@ -223,11 +223,12 @@ else:
                         else: st.error("❌ Fallo de conexión.")
                         
     # Botón de Cerrar Sesión (Al fondo del sidebar)
-    st.sidebar.text("") # Espaciador
+    st.sidebar.text("") 
     if st.sidebar.button("🚪 Cerrar Sesión", type="primary", use_container_width=True):
         for key in ['autenticado', 'df_ventas', 'mapa_ia', 'archivo_procesado', 'stats_auditoria']:
             if key in st.session_state: del st.session_state[key]
         st.rerun()
+
 
     # ==========================================
     # --- PANTALLA 1: DASHBOARD ---
@@ -239,21 +240,103 @@ else:
         mapa_ia = st.session_state.get("mapa_ia", {})
         
         if df_actual.empty:
-            st.info("👋 Aún no hay datos para graficar. Ve a 'Importar Base Histórica' para cargar tu Excel inicial.")
+            st.info("👋 ¡Bienvenido! Ve a la pestaña '⚙️ Importar Base Histórica' para subir tu primer archivo.")
         else:
-            # (AQUÍ VA TODO TU CÓDIGO DE GRÁFICOS INTACTO)
-            st.success("⚡ Analíticas cargadas desde memoria.")
-            # ... [Pegarías aquí los st.subheader("📈 Tendencias"), las métricas y los px.pie] ...
-            st.write("*(Espacio reservado para los gráficos)*")
+            st.success("⚡ Sistema cargado y sincronizado desde la nube.")
+            
+            # --- AUDITORÍA FORENSE ---
+            mask_incompletas = df_actual.astype(str).eq("NO_DATO").any(axis=1)
+            indices_incompletas = df_actual[mask_incompletas].index 
+            num_incompletas = len(indices_incompletas)
+            
+            st.subheader("📊 Auditoría Forense de Datos")
+            stats = st.session_state['stats_auditoria']
+            c_m1, c_m2, c_m3 = st.columns(3)
+            c_m1.metric("Filas Evaluadas", f"{stats['orig']:,}")
+            c_m2.metric("Duplicados Eliminados", f"{stats['dups']:,}", delta_color="inverse")
+            c_m3.metric("Filas con Datos Faltantes", f"{num_incompletas:,}")
+            
+            if num_incompletas > 0:
+                st.warning(f"⚠️ Se han detectado y resaltado en amarillo {num_incompletas:,} filas con datos incompletos.")
+                
+            def resaltar_amarillo(row):
+                if row.name in indices_incompletas: return ['background-color: #ffd966; color: black'] * len(row)
+                return [''] * len(row)
+                
+            col_btn, _ = st.columns([1, 2])
+            with col_btn:
+                buffer = io.BytesIO()
+                df_actual.style.apply(resaltar_amarillo, axis=1).to_excel(buffer, index=False, engine='openpyxl')
+                st.download_button(
+                    "📥 Descargar Base Auditada", 
+                    data=buffer.getvalue(), 
+                    file_name="datos_auditados_alertas.xlsx", 
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                    use_container_width=True
+                )
+                
+            st.dataframe(df_actual.head(100).style.apply(resaltar_amarillo, axis=1), use_container_width=True)
+            st.divider()
+            
+            # --- GRÁFICOS INTELIGENTES ---
+            col_valor = mapa_ia.get('valor')
+            col_cat = mapa_ia.get('categoria')
+            col_fecha = mapa_ia.get('fecha')
+            col_filtro = mapa_ia.get('filtro')
+            
+            if col_filtro and col_filtro in df_actual.columns:
+                seleccion = st.selectbox(f"📍 Filtro global: {col_filtro}", ["Todos"] + list(df_actual[col_filtro].unique()))
+                if seleccion != "Todos": df_actual = df_actual[df_actual[col_filtro] == seleccion]
+
+            c1, c2 = st.columns(2)
+            with c1:
+                st.subheader("📈 Tendencias")
+                if (col_fecha in df_actual.columns) and (col_valor in df_actual.columns):
+                    df_tendencia = df_actual.copy()
+                    df_tendencia[col_fecha] = pd.to_datetime(df_tendencia[col_fecha], errors='coerce')
+                    df_tendencia[col_valor] = pd.to_numeric(df_tendencia[col_valor], errors='coerce').fillna(0)
+                    tendencia = df_tendencia.groupby(df_tendencia[col_fecha].dt.to_period("M").astype(str))[col_valor].sum().reset_index()
+                    
+                    tipo_g = st.radio("Formato:", ["Líneas", "Área", "Barras"], horizontal=True, key="r1")
+                    if tipo_g == "Líneas": fig = px.line(tendencia, x=col_fecha, y=col_valor)
+                    elif tipo_g == "Área": fig = px.area(tendencia, x=col_fecha, y=col_valor)
+                    else: fig = px.bar(tendencia, x=col_fecha, y=col_valor)
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("IA no detectó columnas de Fecha y Valor compatibles.")
+                    
+            with c2:
+                st.subheader(f"🗺️ Desglose por {col_cat if col_cat else 'Categoría'}")
+                if (col_cat in df_actual.columns) and (col_valor in df_actual.columns):
+                    df_proporcion = df_actual.copy()
+                    df_proporcion[col_valor] = pd.to_numeric(df_proporcion[col_valor], errors='coerce').fillna(0)
+                    df_proporcion[col_cat] = df_proporcion[col_cat].astype(str).str.strip().str.upper() 
+                    
+                    agrupado = df_proporcion.groupby(col_cat)[col_valor].sum().reset_index()
+                    tipo_c = st.selectbox("Formato:", ["Donut (Profesional)", "Pastel (Clásico)", "Barras"], key="s1")
+                    
+                    if tipo_c in ["Donut (Profesional)", "Pastel (Clásico)"]:
+                        agrupado_positivo = agrupado[agrupado[col_valor] > 0]
+                        if agrupado_positivo.empty:
+                            st.warning("⚠️ Valores negativos o cero. Usa 'Barras'.")
+                        else:
+                            if tipo_c == "Donut (Profesional)": fig2 = px.pie(agrupado_positivo, names=col_cat, values=col_valor, hole=0.5)
+                            else: fig2 = px.pie(agrupado_positivo, names=col_cat, values=col_valor)
+                            st.plotly_chart(fig2, use_container_width=True)
+                    else: 
+                        fig2 = px.bar(agrupado, x=col_cat, y=col_valor, color=col_cat)
+                        st.plotly_chart(fig2, use_container_width=True)
+                else:
+                    st.warning("IA no detectó columnas de Categoría y Valor compatibles.")
+
 
     # ==========================================
-    # --- PANTALLA 2: EL CRM VIP (Nuevo) ---
+    # --- PANTALLA 2: EL CRM VIP ---
     # ==========================================
     elif pantalla_actual == "👥 Gestión de Clientes (CRM)":
         st.title("👥 Panel de Clientes y Embudo")
         st.markdown("Visualiza, edita y agrega nuevos clientes a tu cartera de forma dinámica.")
         
-        # Maquetación visual temporal (Wireframe)
         st.subheader("➕ Cargar Nuevo Lead")
         with st.container(border=True):
             c1, c2, c3 = st.columns(3)
@@ -264,24 +347,42 @@ else:
             
         st.divider()
         st.subheader("🗂️ Base de Datos en Vivo")
-        st.info("Aquí aparecerá tu tabla dinámica donde podrás editar las celdas directamente (st.data_editor).")
+        st.info("Aquí aparecerá tu tabla dinámica donde podrás editar las celdas directamente.")
+
 
     # ==========================================
     # --- PANTALLA 3: IMPORTACIÓN E INGESTIÓN ---
     # ==========================================
     elif pantalla_actual == "⚙️ Importar Base Histórica":
         st.title("⚙️ Carga Inicial de Datos")
-        st.markdown("Usa esta herramienta solo si necesitas hacer una migración masiva desde un Excel antiguo.")
+        st.markdown("Usa esta herramienta para hacer una migración masiva desde un Excel antiguo a la base de datos.")
         
         with st.container(border=True):
             archivo = st.file_uploader("Sube tu archivo .xlsx o .csv", type=['csv', 'xlsx', 'xls'])
             
             if archivo and st.session_state.get('archivo_procesado') != archivo.name:
                 with st.spinner("🏥 Operando archivo y actualizando servidores..."):
-                    # (AQUÍ VA TU LÓGICA DE LIMPIEZA INTACTA)
-                    # df_crudo = leer_archivo_seguro(archivo)
-                    # ... [Pegarías tu código actual de procesado] ...
-                    st.success("✅ Sistema actualizado. Ve al Dashboard para ver los resultados.")
+                    df_crudo = leer_archivo_seguro(archivo)
+                    if not df_crudo.empty:
+                        df_crudo = df_crudo.replace(["", " "], pd.NA)
+                        total_orig = len(df_crudo)
+                        
+                        df_limpio = df_crudo.drop_duplicates().reset_index(drop=True)
+                        dups = total_orig - len(df_limpio)
+                        
+                        if 'ID' in df_limpio.columns: df_limpio = df_limpio.drop('ID', axis=1)
+                        df_limpio.insert(0, 'ID', range(1, len(df_limpio) + 1))
+                        df_limpio = df_limpio.fillna("NO_DATO")
+                        
+                        nuevo_mapa = mapear_columnas(list(df_limpio.columns))
+                        guardar_estado_saas(st.session_state['empresa_id'], nuevo_mapa, df_limpio)
+                        
+                        st.session_state["df_ventas"] = df_limpio
+                        st.session_state["mapa_ia"] = nuevo_mapa
+                        st.session_state['archivo_procesado'] = archivo.name
+                        st.session_state['stats_auditoria'] = {'orig': total_orig, 'dups': dups}
+                        
+                        st.success("✅ Sistema actualizado. Ve a la pestaña 'Dashboard de Ventas' para ver el panel.")
     
     # --- ZONA DE ACTUALIZACIÓN FLUIDA ---
     with st.expander("⚙️ Actualizar o Subir Nueva Base de Datos"):
