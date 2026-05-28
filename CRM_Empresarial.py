@@ -77,7 +77,6 @@ def recuperar_estado_saas(empresa_id):
         return {}, pd.DataFrame()
 
 def enviar_ticket_soporte(nombre_empresa, id_empresa, mensaje, adjunto):
-    """Crea y envía un correo electrónico formateado al CTO (Tú)."""
     remitente = st.secrets["email"]["usuario"] 
     password = st.secrets["email"]["password"] 
     destinatario = "fakuokey@gmail.com" 
@@ -112,6 +111,35 @@ def enviar_ticket_soporte(nombre_empresa, id_empresa, mensaje, adjunto):
             smtp.send_message(msg)
         return True
     except Exception as e:
+        return False
+
+# --- AQUÍ VAN LAS NUEVAS HERRAMIENTAS DE CRM ---
+def obtener_clientes(empresa_id):
+    """Consulta la base de datos viva y devuelve los clientes en formato Pandas"""
+    try:
+        motor = create_engine(st.secrets["DB_AUTH_URI"])
+        query = text("SELECT id, nombre_cliente, contacto, estado, fecha_registro FROM clientes_crm WHERE empresa_id = :id ORDER BY id DESC")
+        with motor.connect() as conexion:
+            df_clientes = pd.read_sql(query, conexion, params={"id": empresa_id})
+        return df_clientes
+    except Exception as e:
+        st.error(f"Error al cargar la base de clientes: {e}")
+        return pd.DataFrame()
+
+def insertar_cliente(empresa_id, nombre, contacto, estado):
+    """Inyecta una nueva fila en la tabla clientes_crm de Supabase"""
+    try:
+        motor = create_engine(st.secrets["DB_AUTH_URI"])
+        query = text("""
+            INSERT INTO clientes_crm (empresa_id, nombre_cliente, contacto, estado)
+            VALUES (:emp_id, :nombre, :contacto, :estado)
+        """)
+        with motor.connect() as conexion:
+            conexion.execute(query, {"emp_id": empresa_id, "nombre": nombre, "contacto": contacto, "estado": estado})
+            conexion.commit()
+        return True
+    except Exception as e:
+        st.error(f"Error al guardar cliente en el servidor: {e}")
         return False
 
 # ==========================================
@@ -192,7 +220,7 @@ else:
     st.sidebar.caption(f"ID de Cliente: {st.session_state['empresa_id']}")
     st.sidebar.divider()
     
-    # 📌 EL MENÚ PRINCIPAL (El enrutador)
+    # 📌 EL MENÚ PRINCIPAL
     pantalla_actual = st.sidebar.radio(
         "Navegación del CRM",
         ["📊 Dashboard de Ventas", "👥 Gestión de Clientes (CRM)", "⚙️ Importar Base Histórica"]
@@ -200,7 +228,7 @@ else:
     
     st.sidebar.divider()
     
-    # --- EL WIDGET DE SOPORTE (Fijo en el sidebar) ---
+    # --- EL WIDGET DE SOPORTE ---
     with st.sidebar.popover("💬 Ayuda y Soporte Técnico", use_container_width=True):
         st.markdown(f"**🤖 Asistente de Industrias Faku**\n\n¡Hola equipo de **{st.session_state['nombre_empresa']}**! ¿Tienen algún problema?")
         with st.form("form_soporte", clear_on_submit=True):
@@ -238,7 +266,6 @@ else:
         else:
             st.success("⚡ Sistema cargado y sincronizado desde la nube.")
             
-            # --- AUDITORÍA FORENSE ---
             mask_incompletas = df_actual.astype(str).eq("NO_DATO").any(axis=1)
             indices_incompletas = df_actual[mask_incompletas].index 
             num_incompletas = len(indices_incompletas)
@@ -272,7 +299,6 @@ else:
             st.dataframe(df_actual.head(100).style.apply(resaltar_amarillo, axis=1), use_container_width=True)
             st.divider()
             
-            # --- GRÁFICOS INTELIGENTES ---
             col_valor = mapa_ia.get('valor')
             col_cat = mapa_ia.get('categoria')
             col_fecha = mapa_ia.get('fecha')
@@ -323,7 +349,7 @@ else:
                 else:
                     st.warning("IA no detectó columnas de Categoría y Valor compatibles.")
 
-# ==========================================
+    # ==========================================
     # --- PANTALLA 2: EL CRM VIP ---
     # ==========================================
     elif pantalla_actual == "👥 Gestión de Clientes (CRM)":
@@ -332,7 +358,6 @@ else:
         
         st.subheader("➕ Cargar Nuevo Lead")
         with st.container(border=True):
-            # Usamos un form para que la página no se recargue por cada letra que escribís
             with st.form("form_nuevo_cliente", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)
                 nombre_nuevo = c1.text_input("Nombre del Cliente *")
@@ -349,40 +374,19 @@ else:
                             exito = insertar_cliente(st.session_state['empresa_id'], nombre_nuevo, contacto_nuevo, estado_nuevo)
                             if exito:
                                 st.success(f"✅ ¡{nombre_nuevo} agregado al pipeline!")
-                                time.sleep(1) # Pausa para que el usuario lea el éxito
-                                st.rerun() # Recargamos para que aparezca abajo en la tabla
+                                time.sleep(1) 
+                                st.rerun() 
             
         st.divider()
         st.subheader("🗂️ Base de Datos en Vivo")
         
-def obtener_clientes(empresa_id):
-    """Consulta la base de datos viva y devuelve los clientes en formato Pandas"""
-    try:
-        motor = create_engine(st.secrets["DB_AUTH_URI"])
-        query = text("SELECT id, nombre_cliente, contacto, estado, fecha_registro FROM clientes_crm WHERE empresa_id = :id ORDER BY id DESC")
-        with motor.connect() as conexion:
-            # pd.read_sql es mágico: ejecuta la query y te arma el DataFrame al instante
-            df_clientes = pd.read_sql(query, conexion, params={"id": empresa_id})
-        return df_clientes
-    except Exception as e:
-        st.error(f"Error al cargar la base de clientes: {e}")
-        return pd.DataFrame()
-
-def insertar_cliente(empresa_id, nombre, contacto, estado):
-    """Inyecta una nueva fila en la tabla clientes_crm de Supabase"""
-    try:
-        motor = create_engine(st.secrets["DB_AUTH_URI"])
-        query = text("""
-            INSERT INTO clientes_crm (empresa_id, nombre_cliente, contacto, estado)
-            VALUES (:emp_id, :nombre, :contacto, :estado)
-        """)
-        with motor.connect() as conexion:
-            conexion.execute(query, {"emp_id": empresa_id, "nombre": nombre, "contacto": contacto, "estado": estado})
-            conexion.commit()
-        return True
-    except Exception as e:
-        st.error(f"Error al guardar cliente en el servidor: {e}")
-        return False
+        # Leemos los datos directamente de Supabase
+        df_crm = obtener_clientes(st.session_state['empresa_id'])
+        
+        if df_crm.empty:
+            st.info("Aún no tienes clientes registrados. ¡Agrega el primero en el panel de arriba!")
+        else:
+            st.data_editor(df_crm, use_container_width=True, hide_index=True)
 
     # ==========================================
     # --- PANTALLA 3: IMPORTACIÓN E INGESTIÓN ---
