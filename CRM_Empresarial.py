@@ -191,20 +191,97 @@ if not st.session_state['autenticado']:
                         st.error("❌ Credenciales incorrectas.")
 
 else:
-    # --- SIDEBAR CORPORATIVO ---
+    # ==========================================
+    # --- SIDEBAR CORPORATIVO Y NAVEGACIÓN ---
+    # ==========================================
     st.sidebar.title(f"🏢 {st.session_state['nombre_empresa']}")
     st.sidebar.caption(f"ID de Cliente: {st.session_state['empresa_id']}")
     st.sidebar.divider()
     
-    if st.sidebar.button("Cerrar Sesión", type="primary"):
+    # 📌 EL MENÚ PRINCIPAL (El enrutador)
+    pantalla_actual = st.sidebar.radio(
+        "Navegación del CRM",
+        ["📊 Dashboard de Ventas", "👥 Gestión de Clientes (CRM)", "⚙️ Importar Base Histórica"]
+    )
+    
+    st.sidebar.divider()
+    
+    # --- EL WIDGET DE SOPORTE (Se queda fijo en el sidebar para toda la app) ---
+    with st.sidebar.popover("💬 Ayuda y Soporte Técnico", use_container_width=True):
+        st.markdown(f"**🤖 Asistente de Industrias Faku**\n\n¡Hola equipo de **{st.session_state['nombre_empresa']}**! ¿Tienen algún problema?")
+        with st.form("form_soporte", clear_on_submit=True):
+            mensaje_soporte = st.text_area("Escribe tu inconveniente con detalle:")
+            captura = st.file_uploader("Adjuntar captura del error (Opcional)", type=["png", "jpg", "jpeg"])
+            enviado = st.form_submit_button("📩 Enviar Reporte", use_container_width=True)
+            if enviado:
+                if len(mensaje_soporte) < 5:
+                    st.error("Por favor, escribe un mensaje más largo.")
+                else:
+                    with st.spinner("Enviando reporte a la central..."):
+                        exito = enviar_ticket_soporte(st.session_state['nombre_empresa'], st.session_state['empresa_id'], mensaje_soporte, captura)
+                        if exito: st.success("✅ ¡Ticket enviado!")
+                        else: st.error("❌ Fallo de conexión.")
+                        
+    # Botón de Cerrar Sesión (Al fondo del sidebar)
+    st.sidebar.text("") # Espaciador
+    if st.sidebar.button("🚪 Cerrar Sesión", type="primary", use_container_width=True):
         for key in ['autenticado', 'df_ventas', 'mapa_ia', 'archivo_procesado', 'stats_auditoria']:
             if key in st.session_state: del st.session_state[key]
         st.rerun()
 
-    st.title("💸 Panel de Inteligencia de Negocios")
-    # ... (tu código del sidebar de cerrar sesión) ...
-    
-    st.sidebar.divider()
+    # ==========================================
+    # --- PANTALLA 1: DASHBOARD ---
+    # ==========================================
+    if pantalla_actual == "📊 Dashboard de Ventas":
+        st.title("💸 Panel de Inteligencia de Negocios")
+        
+        df_actual = st.session_state.get("df_ventas", pd.DataFrame())
+        mapa_ia = st.session_state.get("mapa_ia", {})
+        
+        if df_actual.empty:
+            st.info("👋 Aún no hay datos para graficar. Ve a 'Importar Base Histórica' para cargar tu Excel inicial.")
+        else:
+            # (AQUÍ VA TODO TU CÓDIGO DE GRÁFICOS INTACTO)
+            st.success("⚡ Analíticas cargadas desde memoria.")
+            # ... [Pegarías aquí los st.subheader("📈 Tendencias"), las métricas y los px.pie] ...
+            st.write("*(Espacio reservado para los gráficos)*")
+
+    # ==========================================
+    # --- PANTALLA 2: EL CRM VIP (Nuevo) ---
+    # ==========================================
+    elif pantalla_actual == "👥 Gestión de Clientes (CRM)":
+        st.title("👥 Panel de Clientes y Embudo")
+        st.markdown("Visualiza, edita y agrega nuevos clientes a tu cartera de forma dinámica.")
+        
+        # Maquetación visual temporal (Wireframe)
+        st.subheader("➕ Cargar Nuevo Lead")
+        with st.container(border=True):
+            c1, c2, c3 = st.columns(3)
+            c1.text_input("Nombre del Cliente")
+            c2.text_input("Correo/Teléfono")
+            c3.selectbox("Estado", ["Prospecto", "Negociación", "Ganado", "Perdido"])
+            st.button("Guardar Cliente (Simulado)", type="primary")
+            
+        st.divider()
+        st.subheader("🗂️ Base de Datos en Vivo")
+        st.info("Aquí aparecerá tu tabla dinámica donde podrás editar las celdas directamente (st.data_editor).")
+
+    # ==========================================
+    # --- PANTALLA 3: IMPORTACIÓN E INGESTIÓN ---
+    # ==========================================
+    elif pantalla_actual == "⚙️ Importar Base Histórica":
+        st.title("⚙️ Carga Inicial de Datos")
+        st.markdown("Usa esta herramienta solo si necesitas hacer una migración masiva desde un Excel antiguo.")
+        
+        with st.container(border=True):
+            archivo = st.file_uploader("Sube tu archivo .xlsx o .csv", type=['csv', 'xlsx', 'xls'])
+            
+            if archivo and st.session_state.get('archivo_procesado') != archivo.name:
+                with st.spinner("🏥 Operando archivo y actualizando servidores..."):
+                    # (AQUÍ VA TU LÓGICA DE LIMPIEZA INTACTA)
+                    # df_crudo = leer_archivo_seguro(archivo)
+                    # ... [Pegarías tu código actual de procesado] ...
+                    st.success("✅ Sistema actualizado. Ve al Dashboard para ver los resultados.")
     
     # --- EL WIDGET DE SOPORTE (BOT) ---
     # Usamos st.popover para simular la burbuja de chat
