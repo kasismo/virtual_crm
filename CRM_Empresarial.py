@@ -283,39 +283,6 @@ else:
                     # ... [Pegarías tu código actual de procesado] ...
                     st.success("✅ Sistema actualizado. Ve al Dashboard para ver los resultados.")
     
-    # --- EL WIDGET DE SOPORTE (BOT) ---
-    # Usamos st.popover para simular la burbuja de chat
-    with st.sidebar.popover("💬 Ayuda y Soporte Técnico", use_container_width=True):
-        
-        # El bot saluda usando el nombre real de la empresa que está en la sesión
-        st.markdown(f"**🤖 Asistente de Industrias Faku**\n\n¡Hola equipo de **{st.session_state['nombre_empresa']}**! ¿Tienen algún problema con el panel o los datos?")
-        
-        # Creamos un formulario que se limpia solo al enviarse
-        with st.form("form_soporte", clear_on_submit=True):
-            mensaje_soporte = st.text_area("Escribe tu inconveniente con detalle:")
-            
-            # El botón de subir archivo (solo imágenes)
-            captura = st.file_uploader("Adjuntar captura del error (Opcional)", type=["png", "jpg", "jpeg"])
-            
-            enviado = st.form_submit_button("📩 Enviar Reporte", use_container_width=True)
-
-            if enviado:
-                if len(mensaje_soporte) < 5:
-                    st.error("Por favor, escribe un mensaje más largo.")
-                else:
-                    with st.spinner("Enviando reporte a la central..."):
-                        # Llamamos a nuestra función secreta
-                        exito = enviar_ticket_soporte(
-                            st.session_state['nombre_empresa'],
-                            st.session_state['empresa_id'],
-                            mensaje_soporte,
-                            captura
-                        )
-                        
-                        if exito:
-                            st.success("✅ ¡Ticket enviado! Facundo revisará el caso y se pondrá en contacto pronto.")
-                        else:
-                            st.error("❌ Fallo de conexión. Intenta de nuevo más tarde.")
     # --- ZONA DE ACTUALIZACIÓN FLUIDA ---
     with st.expander("⚙️ Actualizar o Subir Nueva Base de Datos"):
         archivo = st.file_uploader("Sube tu archivo para sobrescribir los datos actuales.", type=['csv', 'xlsx', 'xls'])
