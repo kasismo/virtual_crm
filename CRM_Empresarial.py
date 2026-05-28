@@ -323,7 +323,7 @@ else:
                 else:
                     st.warning("IA no detectó columnas de Categoría y Valor compatibles.")
 
-    # ==========================================
+# ==========================================
     # --- PANTALLA 2: EL CRM VIP ---
     # ==========================================
     elif pantalla_actual == "👥 Gestión de Clientes (CRM)":
@@ -332,15 +332,38 @@ else:
         
         st.subheader("➕ Cargar Nuevo Lead")
         with st.container(border=True):
-            c1, c2, c3 = st.columns(3)
-            c1.text_input("Nombre del Cliente")
-            c2.text_input("Correo/Teléfono")
-            c3.selectbox("Estado", ["Prospecto", "Negociación", "Ganado", "Perdido"])
-            st.button("Guardar Cliente (Simulado)", type="primary")
+            # Usamos un form para que la página no se recargue por cada letra que escribís
+            with st.form("form_nuevo_cliente", clear_on_submit=True):
+                c1, c2, c3 = st.columns(3)
+                nombre_nuevo = c1.text_input("Nombre del Cliente *")
+                contacto_nuevo = c2.text_input("Correo/Teléfono")
+                estado_nuevo = c3.selectbox("Estado", ["Prospecto", "Negociación", "Ganado", "Perdido"])
+                
+                guardar = st.form_submit_button("Guardar Cliente", type="primary")
+                
+                if guardar:
+                    if len(nombre_nuevo.strip()) < 2:
+                        st.error("⚠️ El nombre del cliente es obligatorio.")
+                    else:
+                        with st.spinner("Inyectando registro en Supabase..."):
+                            exito = insertar_cliente(st.session_state['empresa_id'], nombre_nuevo, contacto_nuevo, estado_nuevo)
+                            if exito:
+                                st.success(f"✅ ¡{nombre_nuevo} agregado al pipeline!")
+                                time.sleep(1) # Pausa para que el usuario lea el éxito
+                                st.rerun() # Recargamos para que aparezca abajo en la tabla
             
         st.divider()
         st.subheader("🗂️ Base de Datos en Vivo")
-        st.info("Aquí aparecerá tu tabla dinámica donde podrás editar las celdas directamente.")
+        
+        # Disparamos la consulta SQL a Supabase pasando el ID de la empresa logueada
+        df_crm = obtener_clientes(st.session_state['empresa_id'])
+        
+        if df_crm.empty:
+            st.info("Aún no tienes clientes registrados. ¡Agrega el primero en el panel de arriba!")
+        else:
+            # data_editor reemplaza al dataframe estático. 
+            # hide_index=True quita los números feos de la izquierda.
+            st.data_editor(df_crm, use_container_width=True, hide_index=True)
 
     # ==========================================
     # --- PANTALLA 3: IMPORTACIÓN E INGESTIÓN ---
