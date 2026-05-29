@@ -142,52 +142,62 @@ def insertar_cliente(empresa_id, nombre, contacto, estado):
         st.error(f"Error al guardar cliente en el servidor: {e}")
         return False
 
-def migrar_df_a_crm(empresa_id, df):
-    """Recorre el DataFrame importado y crea leads individuales en clientes_crm"""
+def migrar_df_a_crm(empresa_id, df, mapa_ia):
+    """Recorre el DataFrame importado usando la inteligencia de Gemini para crear leads."""
     try:
         motor = create_engine(st.secrets["DB_AUTH_URI"])
         
-        # 1. Detectar columnas dinámicamente por palabras clave
-        col_nombre = next((c for c in df.columns if c.lower() in ['nombre_cliente', 'customer_name', 'cliente', 'nombre']), None)
-        col_contacto = next((c for c in df.columns if c.lower() in ['contacto', 'email', 'correo', 'telefono', 'phone', 'customer_id', 'order_id']), None)
-        col_estado = next((c for c in df.columns if c.lower() in ['estado', 'status', 'stage']), None)
+        # 1. Le preguntamos a Gemini cuáles son las columnas correctas
+        col_nombre = mapa_ia.get('cliente')
+        col_contacto = mapa_ia.get('contacto')
+        col_estado = mapa_ia.get('filtro')
         
-        # Fallback por si las columnas tienen nombres totalmente raros
-        if not col_nombre: 
-            col_nombre = df.select_dtypes(include=['object']).columns[0]
+        # 2. BARRERA DE SEGURIDAD ABSOLUTA
+        if not col_nombre or col_nombre not in df.columns:
+            return False, "La IA no detectó una columna de Clientes. Se actualizaron los gráficos, pero se bloqueó la inyección al CRM para evitar datos corruptos."
+            
+        # Fallback inofensivo solo para el estado
+        if not col_estado or col_estado not in df.columns:
+            col_estado = next((c for c in df.columns if c.lower() in ['estado', 'status', 'stage']), None)
             
         query = text("""
             INSERT INTO clientes_crm (empresa_id, nombre_cliente, contacto, estado)
             VALUES (:emp_id, :nombre, :contacto, :estado)
         """)
         
+        registros_insertados = 0
         with motor.connect() as conexion:
             for _, fila in df.iterrows():
-                # Extracción y limpieza de datos de la fila
-                nombre = str(fila[col_nombre]) if col_nombre in df.columns and pd.notna(fila[col_nombre]) else "Cliente Anónimo"
-                contacto = str(fila[col_contacto]) if col_contacto and pd.notna(fila[col_contacto]) else "Sin Datos"
-                estado_crudo = str(fila[col_estado]).lower() if col_estado and pd.notna(fila[col_estado]) else "prospecto"
+                nombre = str(fila[col_nombre]).strip()
                 
-                # Homologación de estados de logística/ventas a estados de CRM
-                if estado_crudo in ['shipped', 'delivered', 'ganado', 'processed', 'processing']:
+                # Si el nombre está vacío o es un error de lectura, ignoramos a esta persona
+                if not nombre or nombre.lower() in ['nan', 'no_dato', 'none', '']:
+                    continue 
+                    
+                contacto = str(fila[col_contacto]).strip() if col_contacto and pd.notna(fila[col_contacto]) else "Sin Datos"
+                if contacto.lower() in ['nan', 'no_dato', 'none']: contacto = "Sin Datos"
+                
+                estado_crudo = str(fila[col_estado]).lower().strip() if col_estado and pd.notna(fila[col_estado]) else "prospecto"
+                
+                # Homologación
+                if estado_crudo in ['shipped', 'delivered', 'ganado', 'processed', 'processing', 'closed won']:
                     estado_crm = 'Ganado'
-                elif estado_crudo in ['cancelled', 'returned', 'perdido', 'cattled']:
+                elif estado_crudo in ['cancelled', 'returned', 'perdido', 'closed lost']:
                     estado_crm = 'Perdido'
                 else:
                     estado_crm = 'Prospecto'
                 
-                # Ejecutamos la inserción individual
                 conexion.execute(query, {
                     "emp_id": empresa_id,
-                    "nombre": nombre,
-                    "contacto": contacto,
+                    "nombre": nombre[:250], 
+                    "contacto": contacto[:250],
                     "estado": estado_crm
                 })
+                registros_insertados += 1
             conexion.commit()
-        return True
+        return True, f"Se inyectaron {registros_insertados} leads válidos al CRM."
     except Exception as e:
-        st.error(f"Error en la migración masiva al CRM: {e}")
-        return False
+        return False, f"Error en la base de datos: {e}"
 
 def purgar_ultimos_clientes(empresa_id, cantidad):
     """Elimina los últimos N clientes agregados, al estilo purge."""
@@ -236,14 +246,16 @@ def mapear_columnas(lista_de_columnas):
         modelo = genai.GenerativeModel('gemini-2.5-flash')
         prompt = f"""
         Mapea qué columna sirve para cada métrica: {lista_de_columnas}
-        - "fecha": (día, mes, date).
-        - "valor": (sales, ventas, ingresos, total).
-        - "gastos": (costos, discount).
+        - "cliente": (customer, nombre, cliente, account, comprador).
+        - "contacto": (email, phone, telefono, correo, contacto).
+        - "fecha": (día, mes, date, fecha).
+        - "valor": (sales, ventas, ingresos, total, price).
+        - "gastos": (costos, discount, gastos).
         - "ganancia": (profit, margen, neto).
-        - "categoria": (category, state, ciudad, producto).
-        - "filtro": (region, pais).
+        - "categoria": (category, state, ciudad, producto, rubro).
+        - "filtro": (region, pais, status, estado).
         Responde ÚNICAMENTE con la estructura JSON. Ejemplo:
-        {{"fecha": "Order Date", "valor": "Sales", "gastos": null, "ganancia": "Profit", "categoria": "State", "filtro": "Region"}}
+        {{"cliente": "Customer Name", "contacto": "Email", "fecha": "Order Date", "valor": "Sales", "gastos": null, "ganancia": "Profit", "categoria": "Category", "filtro": "Status"}}
         """
         respuesta = modelo.generate_content(prompt)
         txt = respuesta.text.replace('```json', '').replace('```', '').strip()
@@ -503,12 +515,12 @@ else:
                         
                         nuevo_mapa = mapear_columnas(list(df_limpio.columns))
                         
-                        # 1. Guardamos la persistencia para el Dashboard histórico
+# 1. Guardamos la persistencia para el Dashboard histórico
                         guardar_estado_saas(st.session_state['empresa_id'], nuevo_mapa, df_limpio)
                         
-                        # 🚀 2. EL NUEVO PUENTE: Migramos las filas automáticamente como leads reales del CRM
-                        with st.spinner("📥 Desglosando archivo e inyectando leads en el pipeline vivo..."):
-                            migrar_df_a_crm(st.session_state['empresa_id'], df_limpio)
+                        # 🚀 2. EL NUEVO PUENTE (Pasándole el cerebro de Gemini)
+                        with st.spinner("📥 Analizando con IA e inyectando leads al CRM..."):
+                            exito_crm, msj_crm = migrar_df_a_crm(st.session_state['empresa_id'], df_limpio, nuevo_mapa)
                         
                         # 3. Guardamos en memoria viva para la sesión actual
                         st.session_state["df_ventas"] = df_limpio
@@ -516,4 +528,7 @@ else:
                         st.session_state['archivo_procesado'] = archivo.name
                         st.session_state['stats_auditoria'] = {'orig': total_orig, 'dups': dups}
                         
-                        st.success("✅ Sincronización completa. Los datos históricos impactaron en el Dashboard y en el pipeline del CRM.")
+                        if exito_crm:
+                            st.success(f"✅ ¡Éxito total! {msj_crm}")
+                        else:
+                            st.warning(f"⚠️ {msj_crm}")
