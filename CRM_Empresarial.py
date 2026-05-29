@@ -113,7 +113,7 @@ def enviar_ticket_soporte(nombre_empresa, id_empresa, mensaje, adjunto):
     except Exception as e:
         return False
 
-# --- HERRAMIENTAS DE CRM ---
+# --- HERRAMIENTAS TRANSACTIONALES DEL CRM ---
 def obtener_clientes(empresa_id):
     try:
         motor = create_engine(st.secrets["DB_AUTH_URI"])
@@ -205,7 +205,7 @@ def migrar_df_a_crm(empresa_id, df, mapa_ia):
         col_contacto = mapa_ia.get('contacto')
         col_estado = mapa_ia.get('filtro')
         
-        # BARRERA DE SEGURIDAD
+        # BARRERA DE SEGURIDAD COGNITIVA
         if not col_nombre or col_nombre not in df.columns:
             return False, "La IA no detectó una columna de Clientes. Se actualizaron los gráficos, pero se bloqueó la inyección al CRM para evitar datos corruptos."
             
@@ -354,7 +354,13 @@ else:
                     use_container_width=True
                 )
                 
-            st.dataframe(df_actual.head(100).style.apply(resaltar_amarillo, axis=1), use_container_width=True)
+            # Renderizado limpio: quitamos doble índice y ocultamos la columna técnica ID
+            st.dataframe(
+                df_actual.head(100).style.apply(resaltar_amarillo, axis=1), 
+                use_container_width=True,
+                hide_index=True,
+                column_config={"ID": None}
+            )
             st.divider()
             
             col_valor = mapa_ia.get('valor')
@@ -444,16 +450,27 @@ else:
             st.info("Aún no tienes clientes registrados. ¡Agrega el primero en el panel de arriba!")
         else:
             df_visual = df_crm.copy()
-            df_visual.index = range(1, len(df_visual) + 1) 
+            # Creamos una columna física de numeración amigable fija
+            df_visual.insert(0, "Nº", range(1, len(df_visual) + 1)) 
             
-            st.markdown("Selecciona una o varias filas de la tabla para gestionarlas. *(Tip: Usa Shift+Click para seleccionar bloques masivos)*")
+            # Función de Styler para pintar filas completas en base a la columna 'estado'
+            def resaltar_estados_crm(row):
+                if str(row['estado']).strip() == 'Ganado':
+                    return ['background-color: #1b4332; color: #d8f3dc'] * len(row) # Verde oscuro premium
+                elif str(row['estado']).strip() == 'Perdido':
+                    return ['background-color: #641212; color: #fce8e6'] * len(row) # Rojo oscuro premium
+                return [''] * len(row)
             
+            st.markdown("Selecciona una o varias filas de la tabla para gestionarlas. *(Tip: Mantén presionado **Shift** para marcar bloques enteros)*")
+            
+            # Renderizado condicional con estilos de color incorporados
             evento = st.dataframe(
-                df_visual, 
+                df_visual.style.apply(resaltar_estados_crm, axis=1), 
                 use_container_width=True, 
-                column_config={"id": None},
+                column_config={"id": None}, # ID real invisible por fuera
                 on_select="rerun",
-                selection_mode="multi-row"
+                selection_mode="multi-row",
+                hide_index=True
             )
 
             filas_seleccionadas = evento.selection.rows
@@ -463,13 +480,14 @@ else:
                 with st.container(border=True):
                     st.warning(f"⚠️ Tienes **{len(filas_seleccionadas)} cliente(s)** seleccionado(s).")
                     
+                    # Buscamos los IDs de Supabase correspondientes a las posiciones marcadas
                     ids_reales_a_borrar = df_crm.iloc[filas_seleccionadas]['id'].tolist()
                     
                     if st.button("🔥 Borrar Seleccionados", type="primary"):
-                        with st.spinner("Purgando registros..."):
+                        with st.spinner("Purgando registros de forma atómica..."):
                             exito, borrados = purgar_ids_especificos(st.session_state['empresa_id'], ids_reales_a_borrar)
                             if exito:
-                                st.success(f"¡Se eliminaron {borrados} registros de la base de datos!")
+                                st.success(f"¡Limpieza exitosa! Se eliminaron {borrados} registros correctamente.")
                                 time.sleep(1)
                                 st.rerun()
 
@@ -483,7 +501,7 @@ else:
         with st.container(border=True):
             archivo = st.file_uploader("Sube tu archivo .xlsx o .csv", type=['csv', 'xlsx', 'xls'])
             
-            if archivo and st.session_state.get('archivo_procesado') != archivo.name:
+            if archivo and st.session_state.get('archivo_processed') != archivo.name:
                 with st.spinner("🏥 Operando archivo y actualizando servidores..."):
                     df_crudo = leer_archivo_seguro(archivo)
                     if not df_crudo.empty:
@@ -500,6 +518,7 @@ else:
                         nuevo_mapa = mapear_columnas(list(df_limpio.columns))
                         guardar_estado_saas(st.session_state['empresa_id'], nuevo_mapa, df_limpio)
                         
+                        # Inyección controlada por el filtro inteligente de Gemini
                         with st.spinner("📥 Analizando con IA e inyectando leads al CRM..."):
                             exito_crm, msj_crm = migrar_df_a_crm(st.session_state['empresa_id'], df_limpio, nuevo_mapa)
                         
