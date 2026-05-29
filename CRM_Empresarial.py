@@ -461,11 +461,18 @@ else:
                         df_limpio = df_limpio.fillna("NO_DATO")
                         
                         nuevo_mapa = mapear_columnas(list(df_limpio.columns))
+                        
+                        # 1. Guardamos la persistencia para el Dashboard histórico
                         guardar_estado_saas(st.session_state['empresa_id'], nuevo_mapa, df_limpio)
                         
+                        # 🚀 2. EL NUEVO PUENTE: Migramos las filas automáticamente como leads reales del CRM
+                        with st.spinner("📥 Desglosando archivo e inyectando leads en el pipeline vivo..."):
+                            migrar_df_a_crm(st.session_state['empresa_id'], df_limpio)
+                        
+                        # 3. Guardamos en memoria viva para la sesión actual
                         st.session_state["df_ventas"] = df_limpio
                         st.session_state["mapa_ia"] = nuevo_mapa
                         st.session_state['archivo_procesado'] = archivo.name
                         st.session_state['stats_auditoria'] = {'orig': total_orig, 'dups': dups}
                         
-                        st.success("✅ Sistema actualizado. Ve a la pestaña 'Dashboard de Ventas' para ver el panel.")
+                        st.success("✅ Sincronización completa. Los datos históricos impactaron en el Dashboard y en el pipeline del CRM.")
