@@ -189,6 +189,27 @@ def migrar_df_a_crm(empresa_id, df):
         st.error(f"Error en la migración masiva al CRM: {e}")
         return False
 
+def purgar_ultimos_clientes(empresa_id, cantidad):
+    """Elimina los últimos N clientes agregados, al estilo purge."""
+    try:
+        motor = create_engine(st.secrets["DB_AUTH_URI"])
+        # Usamos una subquery para seleccionar los últimos N IDs y borrarlos
+        query = text("""
+            DELETE FROM clientes_crm
+            WHERE id IN (
+                SELECT id FROM clientes_crm
+                WHERE empresa_id = :emp_id
+                ORDER BY id DESC
+                LIMIT :cantidad
+            )
+        """)
+        with motor.connect() as conexion:
+            conexion.execute(query, {"emp_id": empresa_id, "cantidad": cantidad})
+            conexion.commit()
+        return True
+    except Exception as e:
+        st.error(f"Error al ejecutar la purga: {e}")
+        return False
 
 # ==========================================
 # --- 3. INGESTIÓN Y IA ---
@@ -435,6 +456,26 @@ else:
             st.info("Aún no tienes clientes registrados. ¡Agrega el primero en el panel de arriba!")
         else:
             st.data_editor(df_crm, use_container_width=True, hide_index=True)
+
+# --- ZONA DE PURGA ESTILO DISCORD ---
+        st.write("") # Espaciador
+        with st.expander("🧹 Herramienta de Limpieza (Purge)"):
+            st.markdown("¿Se inyectaron datos incorrectos? Elimina la última tanda de leads ingresados.")
+            
+            c_purge1, c_purge2 = st.columns([1, 2])
+            with c_purge1:
+                cantidad_purge = st.number_input("Cantidad a eliminar", min_value=1, max_value=5000, value=10)
+            
+            with c_purge2:
+                st.write("") # Alinear el botón con el input
+                st.write("")
+                if st.button("🔥 Ejecutar Purga", type="primary"):
+                    with st.spinner(f"Eliminando los últimos {cantidad_purge} registros..."):
+                        exito = purgar_ultimos_clientes(st.session_state['empresa_id'], cantidad_purge)
+                        if exito:
+                            st.success(f"¡Se eliminaron {cantidad_purge} registros correctamente!")
+                            time.sleep(1)
+                            st.rerun()
 
     # ==========================================
     # --- PANTALLA 3: IMPORTACIÓN E INGESTIÓN ---
