@@ -113,9 +113,8 @@ def enviar_ticket_soporte(nombre_empresa, id_empresa, mensaje, adjunto):
     except Exception as e:
         return False
 
-# --- AQUÍ VAN LAS NUEVAS HERRAMIENTAS DE CRM ---
+# --- HERRAMIENTAS DE CRM ---
 def obtener_clientes(empresa_id):
-    """Consulta la base de datos viva y devuelve los clientes en formato Pandas"""
     try:
         motor = create_engine(st.secrets["DB_AUTH_URI"])
         query = text("SELECT id, nombre_cliente, contacto, estado, fecha_registro FROM clientes_crm WHERE empresa_id = :id ORDER BY id DESC")
@@ -127,7 +126,6 @@ def obtener_clientes(empresa_id):
         return pd.DataFrame()
 
 def insertar_cliente(empresa_id, nombre, contacto, estado):
-    """Inyecta una nueva fila en la tabla clientes_crm de Supabase"""
     try:
         motor = create_engine(st.secrets["DB_AUTH_URI"])
         query = text("""
@@ -142,84 +140,21 @@ def insertar_cliente(empresa_id, nombre, contacto, estado):
         st.error(f"Error al guardar cliente en el servidor: {e}")
         return False
 
-def migrar_df_a_crm(empresa_id, df, mapa_ia):
-    """Recorre el DataFrame importado usando la inteligencia de Gemini para crear leads."""
+def purgar_ids_especificos(empresa_id, lista_ids):
+    if not lista_ids: return True, 0
     try:
         motor = create_engine(st.secrets["DB_AUTH_URI"])
-        
-        # 1. Le preguntamos a Gemini cuáles son las columnas correctas
-        col_nombre = mapa_ia.get('cliente')
-        col_contacto = mapa_ia.get('contacto')
-        col_estado = mapa_ia.get('filtro')
-        
-        # 2. BARRERA DE SEGURIDAD ABSOLUTA
-        if not col_nombre or col_nombre not in df.columns:
-            return False, "La IA no detectó una columna de Clientes. Se actualizaron los gráficos, pero se bloqueó la inyección al CRM para evitar datos corruptos."
-            
-        # Fallback inofensivo solo para el estado
-        if not col_estado or col_estado not in df.columns:
-            col_estado = next((c for c in df.columns if c.lower() in ['estado', 'status', 'stage']), None)
-            
-        query = text("""
-            INSERT INTO clientes_crm (empresa_id, nombre_cliente, contacto, estado)
-            VALUES (:emp_id, :nombre, :contacto, :estado)
-        """)
-        
-        registros_insertados = 0
-        with motor.connect() as conexion:
-            for _, fila in df.iterrows():
-                nombre = str(fila[col_nombre]).strip()
-                
-                # Si el nombre está vacío o es un error de lectura, ignoramos a esta persona
-                if not nombre or nombre.lower() in ['nan', 'no_dato', 'none', '']:
-                    continue 
-                    
-                contacto = str(fila[col_contacto]).strip() if col_contacto and pd.notna(fila[col_contacto]) else "Sin Datos"
-                if contacto.lower() in ['nan', 'no_dato', 'none']: contacto = "Sin Datos"
-                
-                estado_crudo = str(fila[col_estado]).lower().strip() if col_estado and pd.notna(fila[col_estado]) else "prospecto"
-                
-                # Homologación
-                if estado_crudo in ['shipped', 'delivered', 'ganado', 'processed', 'processing', 'closed won']:
-                    estado_crm = 'Ganado'
-                elif estado_crudo in ['cancelled', 'returned', 'perdido', 'closed lost']:
-                    estado_crm = 'Perdido'
-                else:
-                    estado_crm = 'Prospecto'
-                
-                conexion.execute(query, {
-                    "emp_id": empresa_id,
-                    "nombre": nombre[:250], 
-                    "contacto": contacto[:250],
-                    "estado": estado_crm
-                })
-                registros_insertados += 1
-            conexion.commit()
-        return True, f"Se inyectaron {registros_insertados} leads válidos al CRM."
-    except Exception as e:
-        return False, f"Error en la base de datos: {e}"
-
-def purgar_ultimos_clientes(empresa_id, cantidad):
-    """Elimina los últimos N clientes agregados, al estilo purge."""
-    try:
-        motor = create_engine(st.secrets["DB_AUTH_URI"])
-        # Usamos una subquery para seleccionar los últimos N IDs y borrarlos
         query = text("""
             DELETE FROM clientes_crm
-            WHERE id IN (
-                SELECT id FROM clientes_crm
-                WHERE empresa_id = :emp_id
-                ORDER BY id DESC
-                LIMIT :cantidad
-            )
+            WHERE empresa_id = :emp_id AND id = ANY(:ids)
         """)
         with motor.connect() as conexion:
-            conexion.execute(query, {"emp_id": empresa_id, "cantidad": cantidad})
+            resultado = conexion.execute(query, {"emp_id": empresa_id, "ids": lista_ids})
             conexion.commit()
-        return True
+        return True, resultado.rowcount
     except Exception as e:
-        st.error(f"Error al ejecutar la purga: {e}")
-        return False
+        st.error(f"Error al ejecutar la purga específica: {e}")
+        return False, 0
 
 # ==========================================
 # --- 3. INGESTIÓN Y IA ---
@@ -263,6 +198,51 @@ def mapear_columnas(lista_de_columnas):
     except Exception as e:
         return {}
 
+def migrar_df_a_crm(empresa_id, df, mapa_ia):
+    try:
+        motor = create_engine(st.secrets["DB_AUTH_URI"])
+        col_nombre = mapa_ia.get('cliente')
+        col_contacto = mapa_ia.get('contacto')
+        col_estado = mapa_ia.get('filtro')
+        
+        # BARRERA DE SEGURIDAD
+        if not col_nombre or col_nombre not in df.columns:
+            return False, "La IA no detectó una columna de Clientes. Se actualizaron los gráficos, pero se bloqueó la inyección al CRM para evitar datos corruptos."
+            
+        if not col_estado or col_estado not in df.columns:
+            col_estado = next((c for c in df.columns if c.lower() in ['estado', 'status', 'stage']), None)
+            
+        query = text("""
+            INSERT INTO clientes_crm (empresa_id, nombre_cliente, contacto, estado)
+            VALUES (:emp_id, :nombre, :contacto, :estado)
+        """)
+        
+        registros_insertados = 0
+        with motor.connect() as conexion:
+            for _, fila in df.iterrows():
+                nombre = str(fila[col_nombre]).strip()
+                if not nombre or nombre.lower() in ['nan', 'no_dato', 'none', '']:
+                    continue 
+                    
+                contacto = str(fila[col_contacto]).strip() if col_contacto and pd.notna(fila[col_contacto]) else "Sin Datos"
+                if contacto.lower() in ['nan', 'no_dato', 'none']: contacto = "Sin Datos"
+                
+                estado_crudo = str(fila[col_estado]).lower().strip() if col_estado and pd.notna(fila[col_estado]) else "prospecto"
+                
+                if estado_crudo in ['shipped', 'delivered', 'ganado', 'processed', 'processing', 'closed won']:
+                    estado_crm = 'Ganado'
+                elif estado_crudo in ['cancelled', 'returned', 'perdido', 'closed lost']:
+                    estado_crm = 'Perdido'
+                else:
+                    estado_crm = 'Prospecto'
+                
+                conexion.execute(query, {"emp_id": empresa_id, "nombre": nombre[:250], "contacto": contacto[:250], "estado": estado_crm})
+                registros_insertados += 1
+            conexion.commit()
+        return True, f"Se inyectaron {registros_insertados} leads válidos al CRM."
+    except Exception as e:
+        return False, f"Error en la base de datos: {e}"
+
 # ==========================================
 #        INTERFAZ DE USUARIO (FRONTEND)
 # ==========================================
@@ -301,7 +281,6 @@ else:
     st.sidebar.caption(f"ID de Cliente: {st.session_state['empresa_id']}")
     st.sidebar.divider()
     
-    # 📌 EL MENÚ PRINCIPAL
     pantalla_actual = st.sidebar.radio(
         "Navegación del CRM",
         ["📊 Dashboard de Ventas", "👥 Gestión de Clientes (CRM)", "⚙️ Importar Base Histórica"]
@@ -309,7 +288,6 @@ else:
     
     st.sidebar.divider()
     
-    # --- EL WIDGET DE SOPORTE ---
     with st.sidebar.popover("💬 Ayuda y Soporte Técnico", use_container_width=True):
         st.markdown(f"**🤖 Asistente de Industrias Faku**\n\n¡Hola equipo de **{st.session_state['nombre_empresa']}**! ¿Tienen algún problema?")
         with st.form("form_soporte", clear_on_submit=True):
@@ -326,7 +304,6 @@ else:
                         if exito: st.success("✅ ¡Ticket enviado! Facundo revisará el caso.")
                         else: st.error("❌ Fallo de conexión.")
                         
-    # Botón de Cerrar Sesión
     st.sidebar.text("") 
     if st.sidebar.button("🚪 Cerrar Sesión", type="primary", use_container_width=True):
         for key in ['autenticado', 'df_ventas', 'mapa_ia', 'archivo_procesado', 'stats_auditoria']:
@@ -461,33 +438,40 @@ else:
         st.divider()
         st.subheader("🗂️ Base de Datos en Vivo")
         
-        # Leemos los datos directamente de Supabase
         df_crm = obtener_clientes(st.session_state['empresa_id'])
         
         if df_crm.empty:
             st.info("Aún no tienes clientes registrados. ¡Agrega el primero en el panel de arriba!")
         else:
-            st.data_editor(df_crm, use_container_width=True, hide_index=True)
+            df_visual = df_crm.copy()
+            df_visual.index = range(1, len(df_visual) + 1) 
+            
+            st.markdown("Selecciona una o varias filas de la tabla para gestionarlas. *(Tip: Usa Shift+Click para seleccionar bloques masivos)*")
+            
+            evento = st.dataframe(
+                df_visual, 
+                use_container_width=True, 
+                column_config={"id": None},
+                on_select="rerun",
+                selection_mode="multi-row"
+            )
 
-# --- ZONA DE PURGA ESTILO DISCORD ---
-        st.write("") # Espaciador
-        with st.expander("🧹 Herramienta de Limpieza (Purge)"):
-            st.markdown("¿Se inyectaron datos incorrectos? Elimina la última tanda de leads ingresados.")
+            filas_seleccionadas = evento.selection.rows
             
-            c_purge1, c_purge2 = st.columns([1, 2])
-            with c_purge1:
-                cantidad_purge = st.number_input("Cantidad a eliminar", min_value=1, max_value=5000, value=10)
-            
-            with c_purge2:
-                st.write("") # Alinear el botón con el input
+            if filas_seleccionadas:
                 st.write("")
-                if st.button("🔥 Ejecutar Purga", type="primary"):
-                    with st.spinner(f"Eliminando los últimos {cantidad_purge} registros..."):
-                        exito = purgar_ultimos_clientes(st.session_state['empresa_id'], cantidad_purge)
-                        if exito:
-                            st.success(f"¡Se eliminaron {cantidad_purge} registros correctamente!")
-                            time.sleep(1)
-                            st.rerun()
+                with st.container(border=True):
+                    st.warning(f"⚠️ Tienes **{len(filas_seleccionadas)} cliente(s)** seleccionado(s).")
+                    
+                    ids_reales_a_borrar = df_crm.iloc[filas_seleccionadas]['id'].tolist()
+                    
+                    if st.button("🔥 Borrar Seleccionados", type="primary"):
+                        with st.spinner("Purgando registros..."):
+                            exito, borrados = purgar_ids_especificos(st.session_state['empresa_id'], ids_reales_a_borrar)
+                            if exito:
+                                st.success(f"¡Se eliminaron {borrados} registros de la base de datos!")
+                                time.sleep(1)
+                                st.rerun()
 
     # ==========================================
     # --- PANTALLA 3: IMPORTACIÓN E INGESTIÓN ---
@@ -514,15 +498,11 @@ else:
                         df_limpio = df_limpio.fillna("NO_DATO")
                         
                         nuevo_mapa = mapear_columnas(list(df_limpio.columns))
-                        
-# 1. Guardamos la persistencia para el Dashboard histórico
                         guardar_estado_saas(st.session_state['empresa_id'], nuevo_mapa, df_limpio)
                         
-                        # 🚀 2. EL NUEVO PUENTE (Pasándole el cerebro de Gemini)
                         with st.spinner("📥 Analizando con IA e inyectando leads al CRM..."):
                             exito_crm, msj_crm = migrar_df_a_crm(st.session_state['empresa_id'], df_limpio, nuevo_mapa)
                         
-                        # 3. Guardamos en memoria viva para la sesión actual
                         st.session_state["df_ventas"] = df_limpio
                         st.session_state["mapa_ia"] = nuevo_mapa
                         st.session_state['archivo_procesado'] = archivo.name
