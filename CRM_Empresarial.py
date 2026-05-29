@@ -85,19 +85,7 @@ def enviar_ticket_soporte(nombre_empresa, id_empresa, mensaje, adjunto):
     msg['Subject'] = f"🚨 Ticket de Soporte: {nombre_empresa} (ID: {id_empresa})"
     msg['From'] = remitente
     msg['To'] = destinatario
-    
-    cuerpo_correo = f"""
-    Ha ingresado una nueva solicitud de soporte desde el Panel SaaS.
-    
-    🏢 Empresa: {nombre_empresa}
-    🆔 ID de Cliente: {id_empresa}
-    
-    📝 Mensaje del cliente:
-    -------------------------------------------
-    {mensaje}
-    -------------------------------------------
-    """
-    msg.set_content(cuerpo_correo)
+    msg.set_content(f"🏢 Empresa: {nombre_empresa}\n🆔 ID de Cliente: {id_empresa}\n\n📝 Mensaje:\n{mensaje}")
 
     if adjunto is not None:
         adjunto_bytes = adjunto.read()
@@ -117,7 +105,8 @@ def enviar_ticket_soporte(nombre_empresa, id_empresa, mensaje, adjunto):
 def obtener_clientes(empresa_id):
     try:
         motor = create_engine(st.secrets["DB_AUTH_URI"])
-        query = text("SELECT id, nombre_cliente, contacto, estado, fecha_registro FROM clientes_crm WHERE empresa_id = :id ORDER BY id DESC")
+        # Cambiado a ASC para que los nuevos leads se agreguen abajo
+        query = text("SELECT id, nombre_cliente, contacto, estado, fecha_registro FROM clientes_crm WHERE empresa_id = :id ORDER BY id ASC")
         with motor.connect() as conexion:
             df_clientes = pd.read_sql(query, conexion, params={"id": empresa_id})
         return df_clientes
@@ -153,7 +142,6 @@ def purgar_ids_especificos(empresa_id, lista_ids):
             conexion.commit()
         return True, resultado.rowcount
     except Exception as e:
-        st.error(f"Error al ejecutar la purga específica: {e}")
         return False, 0
 
 # ==========================================
@@ -185,12 +173,12 @@ def mapear_columnas(lista_de_columnas):
         - "contacto": (email, phone, telefono, correo, contacto).
         - "fecha": (día, mes, date, fecha).
         - "valor": (sales, ventas, ingresos, total, price).
-        - "gastos": (costos, discount, gastos).
-        - "ganancia": (profit, margen, neto).
+        - "gastos": (costos, discount, gastos, operativo).
+        - "ganancia": (profit, margen, neto, beneficio).
         - "categoria": (category, state, ciudad, producto, rubro).
         - "filtro": (region, pais, status, estado).
         Responde ÚNICAMENTE con la estructura JSON. Ejemplo:
-        {{"cliente": "Customer Name", "contacto": "Email", "fecha": "Order Date", "valor": "Sales", "gastos": null, "ganancia": "Profit", "categoria": "Category", "filtro": "Status"}}
+        {{"cliente": "Customer", "contacto": "Email", "fecha": "Date", "valor": "Sales", "gastos": "Cost", "ganancia": "Profit", "categoria": "Category", "filtro": "Status"}}
         """
         respuesta = modelo.generate_content(prompt)
         txt = respuesta.text.replace('```json', '').replace('```', '').strip()
@@ -205,7 +193,6 @@ def migrar_df_a_crm(empresa_id, df, mapa_ia):
         col_contacto = mapa_ia.get('contacto')
         col_estado = mapa_ia.get('filtro')
         
-        # BARRERA DE SEGURIDAD COGNITIVA
         if not col_nombre or col_nombre not in df.columns:
             return False, "La IA no detectó una columna de Clientes. Se actualizaron los gráficos, pero se bloqueó la inyección al CRM para evitar datos corruptos."
             
@@ -221,20 +208,16 @@ def migrar_df_a_crm(empresa_id, df, mapa_ia):
         with motor.connect() as conexion:
             for _, fila in df.iterrows():
                 nombre = str(fila[col_nombre]).strip()
-                if not nombre or nombre.lower() in ['nan', 'no_dato', 'none', '']:
-                    continue 
+                if not nombre or nombre.lower() in ['nan', 'no_dato', 'none', '']: continue 
                     
                 contacto = str(fila[col_contacto]).strip() if col_contacto and pd.notna(fila[col_contacto]) else "Sin Datos"
                 if contacto.lower() in ['nan', 'no_dato', 'none']: contacto = "Sin Datos"
                 
                 estado_crudo = str(fila[col_estado]).lower().strip() if col_estado and pd.notna(fila[col_estado]) else "prospecto"
                 
-                if estado_crudo in ['shipped', 'delivered', 'ganado', 'processed', 'processing', 'closed won']:
-                    estado_crm = 'Ganado'
-                elif estado_crudo in ['cancelled', 'returned', 'perdido', 'closed lost']:
-                    estado_crm = 'Perdido'
-                else:
-                    estado_crm = 'Prospecto'
+                if estado_crudo in ['shipped', 'delivered', 'ganado', 'processed', 'processing', 'closed won']: estado_crm = 'Ganado'
+                elif estado_crudo in ['cancelled', 'returned', 'perdido', 'closed lost']: estado_crm = 'Perdido'
+                else: estado_crm = 'Prospecto'
                 
                 conexion.execute(query, {"emp_id": empresa_id, "nombre": nombre[:250], "contacto": contacto[:250], "estado": estado_crm})
                 registros_insertados += 1
@@ -311,7 +294,7 @@ else:
         st.rerun()
 
     # ==========================================
-    # --- PANTALLA 1: DASHBOARD ---
+    # --- PANTALLA 1: DASHBOARD (ESTILO EL GRAFICADOR) ---
     # ==========================================
     if pantalla_actual == "📊 Dashboard de Ventas":
         st.title("💸 Panel de Inteligencia de Negocios")
@@ -324,10 +307,40 @@ else:
         else:
             st.success("⚡ Sistema cargado y sincronizado desde la nube.")
             
+            # --- KPIs FINANCIEROS PREMIUM ---
+            col_valor = mapa_ia.get('valor')
+            col_gastos = mapa_ia.get('gastos')
+            col_ganancia = mapa_ia.get('ganancia')
+            
+            if col_valor and col_valor in df_actual.columns:
+                df_kpi = df_actual.copy()
+                df_kpi[col_valor] = pd.to_numeric(df_kpi[col_valor], errors='coerce').fillna(0)
+                ingresos_totales = df_kpi[col_valor].sum()
+                
+                costos_totales = 0
+                if col_gastos and col_gastos in df_kpi.columns:
+                    df_kpi[col_gastos] = pd.to_numeric(df_kpi[col_gastos], errors='coerce').fillna(0)
+                    costos_totales = df_kpi[col_gastos].sum()
+                
+                beneficio_neto = 0
+                if col_ganancia and col_ganancia in df_kpi.columns:
+                    df_kpi[col_ganancia] = pd.to_numeric(df_kpi[col_ganancia], errors='coerce').fillna(0)
+                    beneficio_neto = df_kpi[col_ganancia].sum()
+                else:
+                    beneficio_neto = ingresos_totales - costos_totales
+                
+                st.divider()
+                kpi1, kpi2, kpi3 = st.columns(3)
+                kpi1.metric("💰 Ingresos Totales", f"${ingresos_totales:,.2f}")
+                kpi2.metric("📉 Costos Operativos", f"${costos_totales:,.2f}")
+                kpi3.metric("💎 Beneficio Neto", f"${beneficio_neto:,.2f}")
+            
+            # --- AUDITORÍA FORENSE ---
             mask_incompletas = df_actual.astype(str).eq("NO_DATO").any(axis=1)
             indices_incompletas = df_actual[mask_incompletas].index 
             num_incompletas = len(indices_incompletas)
             
+            st.divider()
             st.subheader("📊 Auditoría Forense de Datos")
             stats = st.session_state['stats_auditoria']
             c_m1, c_m2, c_m3 = st.columns(3)
@@ -354,7 +367,6 @@ else:
                     use_container_width=True
                 )
                 
-            # Renderizado limpio: quitamos doble índice y ocultamos la columna técnica ID
             st.dataframe(
                 df_actual.head(100).style.apply(resaltar_amarillo, axis=1), 
                 use_container_width=True,
@@ -363,7 +375,7 @@ else:
             )
             st.divider()
             
-            col_valor = mapa_ia.get('valor')
+            # --- GRÁFICOS INTELIGENTES Y ESTÉTICOS ---
             col_cat = mapa_ia.get('categoria')
             col_fecha = mapa_ia.get('fecha')
             col_filtro = mapa_ia.get('filtro')
@@ -374,23 +386,40 @@ else:
 
             c1, c2 = st.columns(2)
             with c1:
-                st.subheader("📈 Tendencias")
+                st.subheader("📈 Evolución Temporal")
                 if (col_fecha in df_actual.columns) and (col_valor in df_actual.columns):
                     df_tendencia = df_actual.copy()
                     df_tendencia[col_fecha] = pd.to_datetime(df_tendencia[col_fecha], errors='coerce')
-                    df_tendencia[col_valor] = pd.to_numeric(df_tendencia[col_valor], errors='coerce').fillna(0)
-                    tendencia = df_tendencia.groupby(df_tendencia[col_fecha].dt.to_period("M").astype(str))[col_valor].sum().reset_index()
+                    
+                    # Generamos una lista de qué columnas financieras tenemos disponibles para graficar a la vez
+                    cols_grafico = [c for c in [col_valor, col_gastos, col_ganancia] if c and c in df_tendencia.columns]
+                    for c in cols_grafico:
+                        df_tendencia[c] = pd.to_numeric(df_tendencia[c], errors='coerce').fillna(0)
+                        
+                    tendencia = df_tendencia.groupby(df_tendencia[col_fecha].dt.to_period("M").astype(str))[cols_grafico].sum().reset_index()
                     
                     tipo_g = st.radio("Formato:", ["Líneas", "Área", "Barras"], horizontal=True, key="r1")
-                    if tipo_g == "Líneas": fig = px.line(tendencia, x=col_fecha, y=col_valor)
-                    elif tipo_g == "Área": fig = px.area(tendencia, x=col_fecha, y=col_valor)
-                    else: fig = px.bar(tendencia, x=col_fecha, y=col_valor)
+                    
+                    # Colores específicos para las 3 líneas (Ingresos: Celeste, Costos: Rojo pastel, Ganancia: Verde flúor)
+                    colores_lineas = ['#63b3ed', '#fc8181', '#68d391'] 
+                    
+                    if tipo_g == "Líneas": fig = px.line(tendencia, x=col_fecha, y=cols_grafico, color_discrete_sequence=colores_lineas)
+                    elif tipo_g == "Área": fig = px.area(tendencia, x=col_fecha, y=cols_grafico, color_discrete_sequence=colores_lineas)
+                    else: fig = px.bar(tendencia, x=col_fecha, y=cols_grafico, barmode='group', color_discrete_sequence=colores_lineas)
+                    
+                    # Limpieza estética de los nombres de los ejes
+                    fig.update_layout(
+                        xaxis_title="Fecha", 
+                        yaxis_title="Monto (USD)",
+                        legend_title_text="Métricas",
+                        hovermode="x unified"
+                    )
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.warning("IA no detectó columnas de Fecha y Valor compatibles.")
                     
             with c2:
-                st.subheader(f"🗺️ Desglose por {col_cat if col_cat else 'Categoría'}")
+                st.subheader(f"🗺️ Desglose por Categoría")
                 if (col_cat in df_actual.columns) and (col_valor in df_actual.columns):
                     df_proporcion = df_actual.copy()
                     df_proporcion[col_valor] = pd.to_numeric(df_proporcion[col_valor], errors='coerce').fillna(0)
@@ -404,11 +433,17 @@ else:
                         if agrupado_positivo.empty:
                             st.warning("⚠️ Valores negativos o cero. Usa 'Barras'.")
                         else:
-                            if tipo_c == "Donut (Profesional)": fig2 = px.pie(agrupado_positivo, names=col_cat, values=col_valor, hole=0.5)
-                            else: fig2 = px.pie(agrupado_positivo, names=col_cat, values=col_valor)
+                            # Paleta de colores elegante y profesional
+                            if tipo_c == "Donut (Profesional)": fig2 = px.pie(agrupado_positivo, names=col_cat, values=col_valor, hole=0.5, color_discrete_sequence=px.colors.qualitative.Pastel)
+                            else: fig2 = px.pie(agrupado_positivo, names=col_cat, values=col_valor, color_discrete_sequence=px.colors.qualitative.Pastel)
+                            
+                            # ACÁ ARREGLAMOS EL BUG VISUAL: Letras de adentro en color blanco sólido
+                            fig2.update_traces(textposition='inside', textinfo='percent+label', insidetextfont=dict(color='white', size=14))
+                            fig2.update_layout(showlegend=False) # Escondemos la leyenda lateral para que el gráfico ocupe más lugar
+                            
                             st.plotly_chart(fig2, use_container_width=True)
                     else: 
-                        fig2 = px.bar(agrupado, x=col_cat, y=col_valor, color=col_cat)
+                        fig2 = px.bar(agrupado, x=col_cat, y=col_valor, color=col_cat, color_discrete_sequence=px.colors.qualitative.Pastel)
                         st.plotly_chart(fig2, use_container_width=True)
                 else:
                     st.warning("IA no detectó columnas de Categoría y Valor compatibles.")
@@ -450,24 +485,21 @@ else:
             st.info("Aún no tienes clientes registrados. ¡Agrega el primero en el panel de arriba!")
         else:
             df_visual = df_crm.copy()
-            # Creamos una columna física de numeración amigable fija
             df_visual.insert(0, "Nº", range(1, len(df_visual) + 1)) 
             
-            # Función de Styler para pintar filas completas en base a la columna 'estado'
             def resaltar_estados_crm(row):
                 if str(row['estado']).strip() == 'Ganado':
-                    return ['background-color: #1b4332; color: #d8f3dc'] * len(row) # Verde oscuro premium
+                    return ['background-color: #1b4332; color: #d8f3dc'] * len(row) 
                 elif str(row['estado']).strip() == 'Perdido':
-                    return ['background-color: #641212; color: #fce8e6'] * len(row) # Rojo oscuro premium
+                    return ['background-color: #641212; color: #fce8e6'] * len(row) 
                 return [''] * len(row)
             
             st.markdown("Selecciona una o varias filas de la tabla para gestionarlas. *(Tip: Mantén presionado **Shift** para marcar bloques enteros)*")
             
-            # Renderizado condicional con estilos de color incorporados
             evento = st.dataframe(
                 df_visual.style.apply(resaltar_estados_crm, axis=1), 
                 use_container_width=True, 
-                column_config={"id": None}, # ID real invisible por fuera
+                column_config={"id": None},
                 on_select="rerun",
                 selection_mode="multi-row",
                 hide_index=True
@@ -480,7 +512,6 @@ else:
                 with st.container(border=True):
                     st.warning(f"⚠️ Tienes **{len(filas_seleccionadas)} cliente(s)** seleccionado(s).")
                     
-                    # Buscamos los IDs de Supabase correspondientes a las posiciones marcadas
                     ids_reales_a_borrar = df_crm.iloc[filas_seleccionadas]['id'].tolist()
                     
                     if st.button("🔥 Borrar Seleccionados", type="primary"):
@@ -501,7 +532,7 @@ else:
         with st.container(border=True):
             archivo = st.file_uploader("Sube tu archivo .xlsx o .csv", type=['csv', 'xlsx', 'xls'])
             
-            if archivo and st.session_state.get('archivo_processed') != archivo.name:
+            if archivo and st.session_state.get('archivo_procesado') != archivo.name:
                 with st.spinner("🏥 Operando archivo y actualizando servidores..."):
                     df_crudo = leer_archivo_seguro(archivo)
                     if not df_crudo.empty:
@@ -518,7 +549,6 @@ else:
                         nuevo_mapa = mapear_columnas(list(df_limpio.columns))
                         guardar_estado_saas(st.session_state['empresa_id'], nuevo_mapa, df_limpio)
                         
-                        # Inyección controlada por el filtro inteligente de Gemini
                         with st.spinner("📥 Analizando con IA e inyectando leads al CRM..."):
                             exito_crm, msj_crm = migrar_df_a_crm(st.session_state['empresa_id'], df_limpio, nuevo_mapa)
                         
