@@ -142,6 +142,54 @@ def insertar_cliente(empresa_id, nombre, contacto, estado):
         st.error(f"Error al guardar cliente en el servidor: {e}")
         return False
 
+def migrar_df_a_crm(empresa_id, df):
+    """Recorre el DataFrame importado y crea leads individuales en clientes_crm"""
+    try:
+        motor = create_engine(st.secrets["DB_AUTH_URI"])
+        
+        # 1. Detectar columnas dinámicamente por palabras clave
+        col_nombre = next((c for c in df.columns if c.lower() in ['nombre_cliente', 'customer_name', 'cliente', 'nombre']), None)
+        col_contacto = next((c for c in df.columns if c.lower() in ['contacto', 'email', 'correo', 'telefono', 'phone', 'customer_id', 'order_id']), None)
+        col_estado = next((c for c in df.columns if c.lower() in ['estado', 'status', 'stage']), None)
+        
+        # Fallback por si las columnas tienen nombres totalmente raros
+        if not col_nombre: 
+            col_nombre = df.select_dtypes(include=['object']).columns[0]
+            
+        query = text("""
+            INSERT INTO clientes_crm (empresa_id, nombre_cliente, contacto, estado)
+            VALUES (:emp_id, :nombre, :contacto, :estado)
+        """)
+        
+        with motor.connect() as conexion:
+            for _, fila in df.iterrows():
+                # Extracción y limpieza de datos de la fila
+                nombre = str(fila[col_nombre]) if col_nombre in df.columns and pd.notna(fila[col_nombre]) else "Cliente Anónimo"
+                contacto = str(fila[col_contacto]) if col_contacto and pd.notna(fila[col_contacto]) else "Sin Datos"
+                estado_crudo = str(fila[col_estado]).lower() if col_estado and pd.notna(fila[col_estado]) else "prospecto"
+                
+                # Homologación de estados de logística/ventas a estados de CRM
+                if estado_crudo in ['shipped', 'delivered', 'ganado', 'processed', 'processing']:
+                    estado_crm = 'Ganado'
+                elif estado_crudo in ['cancelled', 'returned', 'perdido', 'cattled']:
+                    estado_crm = 'Perdido'
+                else:
+                    estado_crm = 'Prospecto'
+                
+                # Ejecutamos la inserción individual
+                conexion.execute(query, {
+                    "emp_id": empresa_id,
+                    "nombre": nombre,
+                    "contacto": contacto,
+                    "estado": estado_crm
+                })
+            conexion.commit()
+        return True
+    except Exception as e:
+        st.error(f"Error en la migración masiva al CRM: {e}")
+        return False
+
+
 # ==========================================
 # --- 3. INGESTIÓN Y IA ---
 # ==========================================
