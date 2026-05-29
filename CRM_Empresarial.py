@@ -85,7 +85,19 @@ def enviar_ticket_soporte(nombre_empresa, id_empresa, mensaje, adjunto):
     msg['Subject'] = f"🚨 Ticket de Soporte: {nombre_empresa} (ID: {id_empresa})"
     msg['From'] = remitente
     msg['To'] = destinatario
-    msg.set_content(f"🏢 Empresa: {nombre_empresa}\n🆔 ID de Cliente: {id_empresa}\n\n📝 Mensaje:\n{mensaje}")
+    
+    cuerpo_correo = f"""
+    Ha ingresado una nueva solicitud de soporte desde el Panel SaaS.
+    
+    🏢 Empresa: {nombre_empresa}
+    🆔 ID de Cliente: {id_empresa}
+    
+    📝 Mensaje del cliente:
+    -------------------------------------------
+    {mensaje}
+    -------------------------------------------
+    """
+    msg.set_content(cuerpo_correo)
 
     if adjunto is not None:
         adjunto_bytes = adjunto.read()
@@ -105,7 +117,6 @@ def enviar_ticket_soporte(nombre_empresa, id_empresa, mensaje, adjunto):
 def obtener_clientes(empresa_id):
     try:
         motor = create_engine(st.secrets["DB_AUTH_URI"])
-        # Cambiado a ASC para que los nuevos leads se agreguen abajo
         query = text("SELECT id, nombre_cliente, contacto, estado, fecha_registro FROM clientes_crm WHERE empresa_id = :id ORDER BY id ASC")
         with motor.connect() as conexion:
             df_clientes = pd.read_sql(query, conexion, params={"id": empresa_id})
@@ -142,6 +153,7 @@ def purgar_ids_especificos(empresa_id, lista_ids):
             conexion.commit()
         return True, resultado.rowcount
     except Exception as e:
+        st.error(f"Error al ejecutar la purga específica: {e}")
         return False, 0
 
 # ==========================================
@@ -294,7 +306,7 @@ else:
         st.rerun()
 
     # ==========================================
-    # --- PANTALLA 1: DASHBOARD (ESTILO EL GRAFICADOR) ---
+    # --- PANTALLA 1: DASHBOARD (LIMPIO Y DIRECTO) ---
     # ==========================================
     if pantalla_actual == "📊 Dashboard de Ventas":
         st.title("💸 Panel de Inteligencia de Negocios")
@@ -335,44 +347,6 @@ else:
                 kpi2.metric("📉 Costos Operativos", f"${costos_totales:,.2f}")
                 kpi3.metric("💎 Beneficio Neto", f"${beneficio_neto:,.2f}")
             
-            # --- AUDITORÍA FORENSE ---
-            mask_incompletas = df_actual.astype(str).eq("NO_DATO").any(axis=1)
-            indices_incompletas = df_actual[mask_incompletas].index 
-            num_incompletas = len(indices_incompletas)
-            
-            st.divider()
-            st.subheader("📊 Auditoría Forense de Datos")
-            stats = st.session_state['stats_auditoria']
-            c_m1, c_m2, c_m3 = st.columns(3)
-            c_m1.metric("Filas Evaluadas", f"{stats['orig']:,}")
-            c_m2.metric("Duplicados Eliminados", f"{stats['dups']:,}", delta_color="inverse")
-            c_m3.metric("Filas con Datos Faltantes", f"{num_incompletas:,}")
-            
-            if num_incompletas > 0:
-                st.warning(f"⚠️ Se han detectado y resaltado en amarillo {num_incompletas:,} filas con datos incompletos.")
-                
-            def resaltar_amarillo(row):
-                if row.name in indices_incompletas: return ['background-color: #ffd966; color: black'] * len(row)
-                return [''] * len(row)
-                
-            col_btn, _ = st.columns([1, 2])
-            with col_btn:
-                buffer = io.BytesIO()
-                df_actual.style.apply(resaltar_amarillo, axis=1).to_excel(buffer, index=False, engine='openpyxl')
-                st.download_button(
-                    "📥 Descargar Base Auditada", 
-                    data=buffer.getvalue(), 
-                    file_name="datos_auditados_alertas.xlsx", 
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
-                    use_container_width=True
-                )
-                
-            st.dataframe(
-                df_actual.head(100).style.apply(resaltar_amarillo, axis=1), 
-                use_container_width=True,
-                hide_index=True,
-                column_config={"ID": None}
-            )
             st.divider()
             
             # --- GRÁFICOS INTELIGENTES Y ESTÉTICOS ---
@@ -391,7 +365,6 @@ else:
                     df_tendencia = df_actual.copy()
                     df_tendencia[col_fecha] = pd.to_datetime(df_tendencia[col_fecha], errors='coerce')
                     
-                    # Generamos una lista de qué columnas financieras tenemos disponibles para graficar a la vez
                     cols_grafico = [c for c in [col_valor, col_gastos, col_ganancia] if c and c in df_tendencia.columns]
                     for c in cols_grafico:
                         df_tendencia[c] = pd.to_numeric(df_tendencia[c], errors='coerce').fillna(0)
@@ -399,21 +372,13 @@ else:
                     tendencia = df_tendencia.groupby(df_tendencia[col_fecha].dt.to_period("M").astype(str))[cols_grafico].sum().reset_index()
                     
                     tipo_g = st.radio("Formato:", ["Líneas", "Área", "Barras"], horizontal=True, key="r1")
-                    
-                    # Colores específicos para las 3 líneas (Ingresos: Celeste, Costos: Rojo pastel, Ganancia: Verde flúor)
                     colores_lineas = ['#63b3ed', '#fc8181', '#68d391'] 
                     
                     if tipo_g == "Líneas": fig = px.line(tendencia, x=col_fecha, y=cols_grafico, color_discrete_sequence=colores_lineas)
                     elif tipo_g == "Área": fig = px.area(tendencia, x=col_fecha, y=cols_grafico, color_discrete_sequence=colores_lineas)
                     else: fig = px.bar(tendencia, x=col_fecha, y=cols_grafico, barmode='group', color_discrete_sequence=colores_lineas)
                     
-                    # Limpieza estética de los nombres de los ejes
-                    fig.update_layout(
-                        xaxis_title="Fecha", 
-                        yaxis_title="Monto (USD)",
-                        legend_title_text="Métricas",
-                        hovermode="x unified"
-                    )
+                    fig.update_layout(xaxis_title="Fecha", yaxis_title="Monto (USD)", legend_title_text="Métricas", hovermode="x unified")
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.warning("IA no detectó columnas de Fecha y Valor compatibles.")
@@ -433,14 +398,11 @@ else:
                         if agrupado_positivo.empty:
                             st.warning("⚠️ Valores negativos o cero. Usa 'Barras'.")
                         else:
-                            # Paleta de colores elegante y profesional
                             if tipo_c == "Donut (Profesional)": fig2 = px.pie(agrupado_positivo, names=col_cat, values=col_valor, hole=0.5, color_discrete_sequence=px.colors.qualitative.Pastel)
                             else: fig2 = px.pie(agrupado_positivo, names=col_cat, values=col_valor, color_discrete_sequence=px.colors.qualitative.Pastel)
                             
-                            # ACÁ ARREGLAMOS EL BUG VISUAL: Letras de adentro en color blanco sólido
                             fig2.update_traces(textposition='inside', textinfo='percent+label', insidetextfont=dict(color='white', size=14))
-                            fig2.update_layout(showlegend=False) # Escondemos la leyenda lateral para que el gráfico ocupe más lugar
-                            
+                            fig2.update_layout(showlegend=False) 
                             st.plotly_chart(fig2, use_container_width=True)
                     else: 
                         fig2 = px.bar(agrupado, x=col_cat, y=col_valor, color=col_cat, color_discrete_sequence=px.colors.qualitative.Pastel)
@@ -488,10 +450,8 @@ else:
             df_visual.insert(0, "Nº", range(1, len(df_visual) + 1)) 
             
             def resaltar_estados_crm(row):
-                if str(row['estado']).strip() == 'Ganado':
-                    return ['background-color: #1b4332; color: #d8f3dc'] * len(row) 
-                elif str(row['estado']).strip() == 'Perdido':
-                    return ['background-color: #641212; color: #fce8e6'] * len(row) 
+                if str(row['estado']).strip() == 'Ganado': return ['background-color: #1b4332; color: #d8f3dc'] * len(row) 
+                elif str(row['estado']).strip() == 'Perdido': return ['background-color: #641212; color: #fce8e6'] * len(row) 
                 return [''] * len(row)
             
             st.markdown("Selecciona una o varias filas de la tabla para gestionarlas. *(Tip: Mantén presionado **Shift** para marcar bloques enteros)*")
@@ -511,7 +471,6 @@ else:
                 st.write("")
                 with st.container(border=True):
                     st.warning(f"⚠️ Tienes **{len(filas_seleccionadas)} cliente(s)** seleccionado(s).")
-                    
                     ids_reales_a_borrar = df_crm.iloc[filas_seleccionadas]['id'].tolist()
                     
                     if st.button("🔥 Borrar Seleccionados", type="primary"):
@@ -523,11 +482,11 @@ else:
                                 st.rerun()
 
     # ==========================================
-    # --- PANTALLA 3: IMPORTACIÓN E INGESTIÓN ---
+    # --- PANTALLA 3: IMPORTACIÓN Y LIMPIEZA FORENSE ---
     # ==========================================
     elif pantalla_actual == "⚙️ Importar Base Histórica":
-        st.title("⚙️ Carga Inicial de Datos")
-        st.markdown("Usa esta herramienta para hacer una migración masiva desde un Excel antiguo a la base de datos.")
+        st.title("⚙️ Carga Inicial y Auditoría")
+        st.markdown("Ingesta un Excel antiguo, analiza su integridad técnica y migra sus datos a tu servidor en la nube.")
         
         with st.container(border=True):
             archivo = st.file_uploader("Sube tu archivo .xlsx o .csv", type=['csv', 'xlsx', 'xls'])
@@ -557,7 +516,76 @@ else:
                         st.session_state['archivo_procesado'] = archivo.name
                         st.session_state['stats_auditoria'] = {'orig': total_orig, 'dups': dups}
                         
-                        if exito_crm:
-                            st.success(f"✅ ¡Éxito total! {msj_crm}")
-                        else:
-                            st.warning(f"⚠️ {msj_crm}")
+                        if exito_crm: st.success(f"✅ ¡Éxito total! {msj_crm}")
+                        else: st.warning(f"⚠️ {msj_crm}")
+
+        # --- SECCIÓN DE AUDITORÍA (AHORA VIVE AQUÍ) ---
+        df_actual = st.session_state.get("df_ventas", pd.DataFrame())
+        if not df_actual.empty:
+            st.divider()
+            st.subheader("📊 Auditoría Forense de Datos")
+            
+            # 1. DIAGNÓSTICO TÉCNICO EXPLICATIVO
+            with st.expander("🛠️ Ver Diagnóstico Técnico de Ingestión"):
+                nombre_arch = st.session_state.get('archivo_procesado', 'archivo_desconocido')
+                ext = nombre_arch.split('.')[-1].lower() if '.' in nombre_arch else 'desconocida'
+                
+                st.markdown("**Análisis del Motor de Lectura:**")
+                if ext in ['xls', 'xlsx']:
+                    st.write(f"- 📄 **Formato:** Archivo Excel detectado (`.{ext}`). Es un formato estructurado antiguo o comprimido; se aplicó el motor `openpyxl` nativo para extraer los datos sin corromper la integridad de la hoja.")
+                else:
+                    st.write(f"- 📄 **Formato:** Texto plano/CSV (`.{ext}`). Se ejecutó inferencia algorítmica de delimitadores y reparación de codificación (ASCII/UTF-8) a través de `chardet` para evitar caracteres rotos (como las tildes).")
+                
+                stats = st.session_state['stats_auditoria']
+                st.write(f"- 🧹 **Saneamiento:** El escaneo inicial encontró {stats['orig']} registros totales. El motor purgó de forma automática {stats['dups']} filas idénticas repetidas.")
+
+            # 2. MÉTRICAS DE LIMPIEZA
+            mask_incompletas = df_actual.astype(str).eq("NO_DATO").any(axis=1)
+            indices_incompletas = df_actual[mask_incompletas].index 
+            num_incompletas = len(indices_incompletas)
+            
+            stats = st.session_state['stats_auditoria']
+            c_m1, c_m2, c_m3 = st.columns(3)
+            c_m1.metric("Filas Evaluadas", f"{stats['orig']:,}")
+            c_m2.metric("Duplicados Eliminados", f"{stats['dups']:,}", delta_color="inverse")
+            c_m3.metric("Filas con Datos Faltantes", f"{num_incompletas:,}")
+            
+            if num_incompletas > 0:
+                st.warning(f"⚠️ El motor detectó y reparó en caliente {num_incompletas:,} celdas vacías inyectando el flag de seguridad 'NO_DATO'. Las filas afectadas están marcadas en amarillo.")
+            
+            def resaltar_amarillo_visual(row):
+                if row.name in indices_incompletas: return ['background-color: #ffd966; color: black'] * len(row)
+                return [''] * len(row)
+                
+            # 3. DOBLE BOTÓN DE DESCARGA (XLSX y CSV)
+            col_b1, col_b2, _ = st.columns([1, 1, 2])
+            with col_b1:
+                buffer_excel = io.BytesIO()
+                df_actual.style.apply(resaltar_amarillo_visual, axis=1).to_excel(buffer_excel, index=False, engine='openpyxl')
+                st.download_button(
+                    "📥 Descargar Base (Excel)", 
+                    data=buffer_excel.getvalue(), 
+                    file_name="base_auditada.xlsx", 
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                    use_container_width=True
+                )
+            with col_b2:
+                csv_limpio = df_actual.to_csv(index=False)
+                st.download_button(
+                    "📥 Descargar Base (CSV)", 
+                    data=csv_limpio, 
+                    file_name="base_auditada.csv", 
+                    mime="text/csv", 
+                    use_container_width=True
+                )
+                
+            # 4. TABLA VISUAL (Con columna Nº estética y sin el ID feo)
+            df_visual_auditoria = df_actual.head(100).copy()
+            df_visual_auditoria.insert(0, "Nº", range(1, len(df_visual_auditoria) + 1))
+            
+            st.dataframe(
+                df_visual_auditoria.style.apply(resaltar_amarillo_visual, axis=1), 
+                use_container_width=True,
+                hide_index=True,
+                column_config={"ID": None} # Ocultamos la ID cruda de procesamiento
+            )
